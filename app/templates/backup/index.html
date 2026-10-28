@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block title %}LAMS{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>备份与还原</h1>
+  <p class="muted">
+    完整备份包含：数据库、全量 manifest、封面、剧照、视频抽帧，统一打包为 zip 下载。
+    备份目录：<code>{{ dir }}</code>
+  </p>
+  {% if error %}<p class="muted">备份服务不可用：{{ error }}</p>{% endif %}
+  <div class="form-row">
+    <button class="btn primary" onclick="createFullBackup()">立即完整备份</button>
+    <button class="btn" onclick="createDbBackup()">仅备份数据库</button>
+    <button class="btn" onclick="location.reload()">刷新</button>
+  </div>
+  <div class="form-row">
+    <input type="file" id="restoreZip" accept=".zip" style="min-width:0">
+    <button class="btn" onclick="restoreUpload()">上传并还原</button>
+    <span class="muted">还原会覆盖当前数据库和媒体资产，建议先创建一次完整备份。</span>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>完整备份</h2>
+  {% if full_backups %}
+  <table class="data backup-table">
+    <colgroup><col class="backup-col-name"><col class="backup-col-size"><col class="backup-col-time"><col class="backup-col-sha"><col class="backup-col-actions"></colgroup>
+    <tr><th>文件名</th><th>大小</th><th>时间</th><th>sha256</th><th>操作</th></tr>
+    {% for b in full_backups %}
+    <tr>
+      <td>{{ b.name }}</td>
+      <td class="nowrap">{{ b.size|filesizeformat }}</td>
+      <td class="nowrap">{{ b.mtime }}</td>
+      <td class="muted" title="{{ b.sha256 or '' }}">{{ (b.sha256 or '—')[:16] }}</td>
+      <td class="nowrap">
+        <a class="btn" href="{{ url_for('backup.download', name=b.name) }}">下载</a>
+        <button class="btn" onclick="verifyFull('{{ b.name }}')">校验</button>
+        <button class="btn" onclick="restoreFull('{{ b.name }}')">还原</button>
+        <button class="btn" onclick="deleteFull('{{ b.name }}')">删除</button>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="muted">还没有完整备份。</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>数据库快照</h2>
+  <p class="muted">旧版仅数据库备份，仅用于兼容或单独恢复数据库；日常请使用上方完整备份。</p>
+  {% if backups %}
+  <table class="data backup-table">
+    <colgroup><col class="backup-col-name"><col class="backup-col-size"><col class="backup-col-time"><col class="backup-col-sha"><col class="backup-col-actions"></colgroup>
+    <tr><th>文件名</th><th>大小</th><th>时间</th><th>sha256</th><th>操作</th></tr>
+    {% for b in backups %}
+    <tr>
+      <td>{{ b.name }}</td>
+      <td class="nowrap">{{ b.size|filesizeformat }}</td>
+      <td class="nowrap">{{ b.mtime }}</td>
+      <td class="muted" title="{{ b.sha256 or '' }}">{{ (b.sha256 or '—')[:16] }}</td>
+      <td class="nowrap">
+        <a class="btn" href="{{ url_for('backup.download', name=b.name) }}">下载</a>
+        <button class="btn" onclick="verifyBackup('{{ b.name }}')">校验</button>
+        <button class="btn" onclick="deleteBackup('{{ b.name }}')">删除</button>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="muted">还没有数据库快照。</p>
+  {% endif %}
+</section>
+
+<script>
+async function post(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+  return [r.ok, await r.json().catch(() => ({}))];
+}
+async function createDbBackup() {
+  const [ok, data] = await post('/api/backup/create', {});
+  if (!ok) { await avlib.alert('失败：' + (data.error || JSON.stringify(data)), '数据库快照失败'); return; }
+  await avlib.alert('数据库快照完成：' + data.name, '备份完成');
+  location.reload();
+}
+async function createFullBackup() {
+  const [ok, data] = await post('/api/backup/create-full', {});
+  if (!ok) { await avlib.alert('失败：' + (data.error || JSON.stringify(data)), '备份失败'); return; }
+  const c = data.counts || {};
+  await avlib.alert('完整备份完成：' + data.name +
+    '\nManifest ' + (c.manifests || 0) + ' 个，封面 ' + (c.covers || 0) +
+    ' 张，剧照 ' + (c.stills || 0) + ' 张，抽帧 ' + (c.screenshots || 0) + ' 张',
+    '备份完成');
+  location.reload();
+}
+async function verifyFull(name) {
+  const [ok, data] = await post('/api/backup/full/verify', { name });
+  await avlib.alert(ok && data.ok ? '校验通过：zip 与 sha256 正常' : '校验失败：' + (data.error || JSON.stringify(data)), '完整备份校验');
+}
+async function restoreFull(name) {
+  if (!await avlib.confirm('还原会覆盖当前数据库和媒体资产，确定使用 ' + name + ' 还原吗？', '还原完整备份')) return;
+  await doRestore({ name });
+}
+async function restoreUpload() {
+  const input = document.getElementById('restoreZip');
+  const file = input.files && input.files[0];
+  if (!file) { await avlib.alert('请先选择一个 .zip 完整备份文件', '未选择文件'); return; }
+  if (!await avlib.confirm('还原会覆盖当前数据库和媒体资产，确定用上传的备份还原吗？', '还原完整备份')) return;
+  const body = new FormData();
+  body.append('file', file);
+  await fetchRestore(body);
+}
+async function doRestore(payload) {
+  await fetchRestore(JSON.stringify(payload), { 'Content-Type': 'application/json' });
+}
+async function fetchRestore(body, headers) {
+  const r = await fetch('/api/backup/restore', { method: 'POST', headers: headers || {}, body });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok || data.ok === false) {
+    await avlib.alert('还原失败：' + (data.error || JSON.stringify(data)), '还原失败');
+    return;
+  }
+  await avlib.alert('还原完成：资产 ' + (data.assets || 0) + ' 个，数据库 ' + (data.database ? '已恢复' : '未恢复'), '还原完成');
+  location.reload();
+}
+async function deleteFull(name) {
+  if (!await avlib.confirm('删除 ' + name + '？', '删除完整备份')) return;
+  const [ok, data] = await post('/api/backup/full/delete', { name });
+  if (ok && data.ok !== false) location.reload();
+  else await avlib.alert('删除失败：' + (data.error || JSON.stringify(data)), '删除失败');
+}
+async function verifyBackup(name) {
+  const [ok, data] = await post('/api/backup/verify', { name });
+  await avlib.alert(ok && data.ok !== false ? `校验通过（integrity=${data.integrity || 'ok'}）` : '校验失败：' + (data.error || JSON.stringify(data)), '数据库快照校验');
+}
+async function deleteBackup(name) {
+  if (!await avlib.confirm('删除 ' + name + '？', '删除数据库快照')) return;
+  const [ok, data] = await post('/api/backup/delete', { name });
+  if (ok && data.ok !== false) location.reload(); else await avlib.alert('删除失败：' + (data.error || JSON.stringify(data)), '删除失败');
+}
+</script>
+{% endblock %}

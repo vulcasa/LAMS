@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}LAMS{% endblock %}
+{% block content %}
+<section class="panel notfound-page">
+  <div class="notfound-code">404</div>
+  <div class="notfound-brand">LAMS</div>
+  <h1>页面不存在</h1>
+  <p class="notfound-text">你访问的页面可能已被移动、删除，或者链接地址有误。</p>
+  <div class="notfound-actions">
+    <a class="btn primary" href="{{ url_for('library.index') }}">返回片库</a>
+    <button type="button" class="btn" onclick="if (history.length > 1) history.back(); else location.href='{{ url_for('library.index') }}';">返回上一页</button>
+  </div>
+  <p class="notfound-path">请求路径：<code>{{ request.path }}</code></p>
+</section>
+{% endblock %}

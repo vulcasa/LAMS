@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% block title %}LAMS{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>文件浏览与传输</h1>
+  <p class="muted">
+    左侧是容器内目录（{{ roots|join('、') }}；「介质」页登记的媒体库/NAS 挂载点也会出现在
+    「容器根」下拉里），右侧是磁带挂载点（{{ tape_mount }}，
+    {{ '已挂载' if tape_mounted else '未挂载' }}）。勾选文件后选方向传输；大文件走后台任务。
+    <strong>勾选「移动」把 NAS 文件搬到磁带后，片库里的文件位置会自动改指到磁带。</strong>
+  </p>
+  <div class="form-row">
+    <label>容器根</label>
+    <select id="c-root" style="width:auto">
+      {% for r in roots %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+    </select>
+    <input id="c-path" value="{{ roots[0] if roots else '' }}" style="min-width:340px">
+    <button class="btn" onclick="loadSide('container', document.getElementById('c-path').value)">浏览</button>
+    <span class="muted">磁带：<span id="t-state">{{ '已挂载' if tape_mounted else '未挂载' }}</span></span>
+    <button class="btn" onclick="refreshTape()">刷新磁带</button>
+  </div>
+</section>
+
+<div class="two-pane">
+  <section class="panel">
+    <h2>容器 <span class="muted" id="c-count"></span></h2>
+    <div class="pane-path"><a href="#" onclick="up('container');return false">⬆ 上级</a> <span id="c-path-show" class="muted"></span></div>
+    <div id="c-list" class="file-list"><p class="muted">点「浏览」加载</p></div>
+  </section>
+  <section class="panel">
+    <h2>磁带 <span class="muted" id="t-count"></span></h2>
+    <div class="pane-path"><a href="#" onclick="up('tape');return false">⬆ 上级</a> <span id="t-path-show" class="muted"></span></div>
+    <div id="t-list" class="file-list"><p class="muted">挂载后才能浏览</p></div>
+  </section>
+</div>
+
+<section class="panel">
+  <h2>传输</h2>
+  <div class="form-row">
+    <label>方向</label>
+    <select id="tr-direction" style="width:auto">
+      <option value="container_to_tape">容器 → 磁带</option>
+      <option value="tape_to_container">磁带 → 容器</option>
+    </select>
+    <label>目标目录</label>
+    <input id="tr-target" placeholder="目标绝对路径" style="min-width:320px">
+    <label class="checkbox"><input type="checkbox" id="tr-move"> 移动（复制成功后删源）</label>
+    <button class="btn primary" onclick="submitTransfer()">开始传输</button>
+    <span class="muted" id="tr-selected">已选 0 项</span>
+  </div>
+  <p class="muted">目标目录必须落在允许的根内；传输有路径逃逸校验，失败会记录在任务里。</p>
+</section>
+
+<section class="panel">
+  <h2>最近传输</h2>
+  <div id="transfers"><p class="muted">暂无</p></div>
+</section>
+
+
+<script>
+const state = { container: { path: '', entries: [], selected: new Set() }, tape: { path: '', entries: [], selected: new Set() } };
+
+function fmt(bytes) {
+  if (!bytes) return '';
+  const u = ['B','KB','MB','GB','TB']; let i = 0; let n = bytes;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return n.toFixed(1) + u[i];
+}
+
+function setPaneMessage(side, html) {
+  const box = document.getElementById(side === 'container' ? 'c-list' : 't-list');
+  box.innerHTML = `<p class="muted">${html}</p>`;
+}
+
+async function loadSide(side, path) {
+  const r = await fetch(`/api/files/browse?side=${side}&path=${encodeURIComponent(path || '')}`);
+  const data = await r.json();
+  if (!data.ok) {
+    setPaneMessage(side, data.error || '加载失败');
+    return;
+  }
+  state[side].path = data.path;
+  state[side].entries = data.entries;
+  const pathInput = document.getElementById(side === 'container' ? 'c-path' : 't-path');
+  if (pathInput) pathInput.value = data.path;
+  document.getElementById(side === 'container' ? 'c-path-show' : 't-path-show').textContent = data.path;
+  const box = document.getElementById(side === 'container' ? 'c-list' : 't-list');
+  box.innerHTML = data.entries.map((e, i) => `
+    <label class="file-row">
+      <input type="checkbox" ${e.is_dir ? 'disabled' : ''} onchange="toggle('${side}', ${i}, this.checked)">
+      ${e.is_dir ? '📁' : '📄'}
+      <a href="#" onclick="enter('${side}', '${e.path.replaceAll("'", "\\'")}');return false">${e.name}</a>
+      <span class="muted">${e.is_dir ? '' : fmt(e.size)}</span>
+    </label>`).join('') || '<p class="muted">空目录</p>';
+  updateSelected();
+  fillTarget();
+}
+
+function enter(side, path) {
+  const e = state[side].entries.find(x => x.path === path);
+  if (e && e.is_dir) loadSide(side, path);
+}
+
+function up(side) {
+  const p = state[side].path;
+  if (!p) return;
+  const parent = p.replace(/\/[^/]+\/?$/, '') || '/';
+  loadSide(side, parent);
+}
+
+function toggle(side, idx, checked) {
+  const e = state[side].entries[idx];
+  if (!e) return;
+  checked ? state[side].selected.add(e.path) : state[side].selected.delete(e.path);
+  updateSelected();
+}
+
+function updateSelected() {
+  const n = state.container.selected.size + state.tape.selected.size;
+  document.getElementById('tr-selected').textContent = `已选 ${n} 项`;
+}
+
+async function submitTransfer() {
+  const dir = document.getElementById('tr-direction').value;
+  const sources = dir === 'container_to_tape'
+    ? [...state.container.selected]
+    : [...state.tape.selected];
+  const target = document.getElementById('tr-target').value.trim();
+  if (!sources.length) { await avlib.alert('先勾选文件', '无法传输'); return; }
+  if (!target) { await avlib.alert('填目标目录', '无法传输'); return; }
+  const r = await fetch('/api/files/transfer', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ direction: dir, sources, target, move: document.getElementById('tr-move').checked })
+  });
+  const data = await r.json();
+  if (!r.ok) { await avlib.alert(data.error || '提交失败', '提交失败'); return; }
+  await avlib.alert('已入队 job #' + data.job_id, '任务已入队');
+  loadTransfers(); setInterval(loadTransfers, 3000);
+}
+
+async function loadTransfers() {
+  const r = await fetch('/api/files/transfers');
+  const data = await r.json();
+  const el = document.getElementById('transfers');
+  if (!data.transfers || !data.transfers.length) { el.innerHTML = '<p class="muted">暂无</p>'; return; }
+  el.innerHTML = '<table class="data"><tr><th>#</th><th>方向</th><th>状态</th><th>进度</th><th>当前文件</th></tr>' +
+    data.transfers.map(t => `<tr><td>${t.id}</td><td>${t.direction}${t.move ? ' (移动)' : ''}</td><td>${t.status}</td>
+      <td>${fmt(t.done_bytes)} / ${fmt(t.total_bytes)}</td><td class="muted">${(t.current_file || '').slice(-70)}</td></tr>`).join('') +
+    '</table>';
+}
+
+async function refreshTape() {
+  const path = state.tape.path || '{{ tape_mount }}';
+  const r = await fetch('/api/tape/status');
+  const d = await r.json().catch(() => ({}));
+  const mounted = !!d.mounted;
+  document.getElementById('t-state').textContent = mounted ? ('已挂载' + (d.barcode ? '：' + d.barcode : '')) : '未挂载';
+  if (mounted) {
+    await loadSide('tape', path);
+  } else {
+    setPaneMessage('tape', '磁带未挂载：先到「磁带」页挂载，或插带后点「刷新磁带」');
+  }
+}
+
+function fillTarget() {
+  const dir = document.getElementById('tr-direction').value;
+  const target = document.getElementById('tr-target');
+  if (target.value.trim()) return;
+  target.value = dir === 'container_to_tape' ? (state.tape.path || '{{ tape_mount }}') : (state.container.path || '');
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+  const rootSel = document.getElementById('c-root');
+  if (rootSel) {
+    rootSel.addEventListener('change', () => {
+      document.getElementById('c-path').value = rootSel.value;
+      loadSide('container', rootSel.value);
+    });
+  }
+  document.getElementById('tr-direction').addEventListener('change', fillTarget);
+  loadSide('container', document.getElementById('c-path').value);
+  refreshTape();
+  setInterval(refreshTape, 8000);
+  loadTransfers();
+});
+</script>
+{% endblock %}

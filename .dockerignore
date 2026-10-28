@@ -1,0 +1,12 @@
+data/
+dist/
+.venv/
+.git/
+.docker-config/
+__pycache__/
+*.pyc
+.pytest_cache/
+.chrome-profile/
+research/
+docs/
+tests/

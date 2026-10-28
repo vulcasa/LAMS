@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}LAMS{% endblock %}
+{% block content %}
+<section class="panel mobile-blocked">
+  <h1>移动端功能受限</h1>
+  <p class="muted">移动端仅开放「片库」和「正在播放」。扫描、刮削、磁带、活动、设置等功能请在桌面端使用。</p>
+  <div class="form-row" style="margin-top:16px">
+    <a class="btn primary" href="{{ url_for('library.index') }}">返回片库</a>
+    <a class="btn" href="{{ url_for('pages.player') }}">打开正在播放</a>
+  </div>
+</section>
+{% endblock %}

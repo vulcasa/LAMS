@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}LAMS{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>{{ code }}</h1>
+  <p class="muted">{{ message }}</p>
+  <p><a class="btn" href="{{ url_for('library.index') }}">回片库</a></p>
+</section>
+{% endblock %}

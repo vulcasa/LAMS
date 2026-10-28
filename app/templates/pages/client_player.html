@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}LAMS{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/client-player.css') }}">
+{% endblock %}
+{% block content %}
+<section class="client-page{{ ' no-current' if not selected else '' }}" id="clientPage">
+  <div class="client-main">
+    {% if selected %}
+    <div class="client-stage" id="clientStage" data-file-id="{{ selected.file_id }}"
+         data-title-id="{{ selected.title_id }}" data-src="{{ selected.src }}">
+      <movi-player id="clientPlayer" src="{{ selected.src }}" controls playsinline
+          wasmurl="{{ url_for('static', filename='vendor/movi/movi.wasm') }}"></movi-player>
+      <button type="button" class="client-playlist-toggle" id="clientPlaylistToggle" title="播放列表">☰</button>
+    </div>
+    <div class="player-meta">
+      <div class="player-meta-main">
+        <span class="player-code" id="clientCode">{{ selected.dvd_id }}</span>
+        <h1 id="clientTitle">{{ selected.title }}</h1>
+        <p id="clientFileName">{{ selected.name }}</p>
+      </div>
+      <div class="player-meta-stats">
+        <span id="clientSize">{{ (selected.size / 1048576)|round(1) }} MB</span>
+        <span>客户端解码 · 服务端不转码、不缓存</span>
+      </div>
+    </div>
+    {% else %}
+    <section class="panel client-empty">
+      <h1>正在播放</h1>
+      <p class="muted">还没有选择影片。请从片库详情页点击「播放影片」，或在右侧最近播放中选择。</p>
+      <a class="btn primary" href="{{ url_for('library.index') }}">返回片库</a>
+    </section>
+    {% endif %}
+  </div>
+
+  <aside class="player-playlist client-playlist" id="clientPlaylist">
+    <div class="playlist-tabs">
+      <button type="button" class="playlist-tab active" data-client-tab="current">当前影片</button>
+      <button type="button" class="playlist-tab" data-client-tab="recent">最近播放</button>
+    </div>
+    <div class="playlist-scroll" id="clientCurrent">
+      {% for item in entries %}
+      <button type="button" class="playlist-item {{ 'active' if selected and item.file_id == selected.file_id else '' }}"
+              data-file-id="{{ item.file_id }}" data-title-id="{{ item.title_id }}"
+              data-src="{{ item.src }}" data-code="{{ item.dvd_id|e }}"
+              data-title="{{ item.title|e }}" data-name="{{ item.name|e }}" data-size="{{ item.size }}">
+        <span class="playlist-cover">{% if item.cover %}<img src="{{ item.cover }}" alt="" loading="lazy">{% else %}<span>{{ item.dvd_id[:2] }}</span>{% endif %}</span>
+        <span class="playlist-info"><b>{{ item.dvd_id }}</b><span>{{ item.title }}</span><small>{{ item.name }}</small></span>
+      </button>
+      {% else %}<p class="muted" style="padding:16px">暂无视频。</p>{% endfor %}
+    </div>
+    <div class="playlist-scroll" id="clientRecent" hidden><p class="muted" style="padding:16px">正在加载最近播放…</p></div>
+    <p class="playlist-note">客户端解码播放；不占用服务端缓存，磁带文件不进入播放列表。</p>
+  </aside>
+  <div class="playlist-backdrop" id="clientBackdrop" hidden></div>
+</section>
+
+{% endblock %}
+{% block scripts %}
+{% if selected %}<script src="{{ url_for('static', filename='vendor/movi/element.slim.global.js') }}"></script>{% endif %}
+<script src="{{ url_for('static', filename='js/client_player.js') }}"></script>
+{% endblock %}

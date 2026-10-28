@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}LAMS{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>合集：{{ collection.name }}</h1>
+  <div class="stats">
+    <div class="stat"><b>{{ collection.files }}</b><span>文件数</span></div>
+    <div class="stat"><b>{{ collection.total_bytes|filesizeformat }}</b><span>总大小</span></div>
+    <div class="stat"><b>{{ collection.volumes|join('、') }}</b><span>所在卷</span></div>
+  </div>
+  <p class="muted">这些文件尚未关联到番号 Title；保留原目录结构，不会自动改文件。</p>
+</section>
+
+<section class="panel">
+  <h2>文件列表</h2>
+  <table class="data">
+    <tr><th>路径</th><th>大小</th><th>置信度</th><th>所在卷</th><th>修改时间</th></tr>
+    {% for row in rows %}
+    <tr>
+      <td class="muted" style="word-break:break-all;font-family:ui-monospace,Menlo,monospace;font-size:12px">{{ row.rel_path }}</td>
+      <td class="nowrap">{{ row.size|filesizeformat if row.size }}</td>
+      <td>{{ row.confidence if row.confidence is not none else '—' }}</td>
+      <td>{{ row.volume }}</td>
+      <td class="nowrap">{{ row.mtime|bjtime if row.mtime else '—' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</section>
+{% endblock %}

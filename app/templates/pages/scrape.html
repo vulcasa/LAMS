@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}LAMS{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>刮削与元数据</h1>
+  <div class="stats">
+    <div class="stat"><b>{{ titles }}</b><span>已入库影片</span></div>
+    <div class="stat"><b>{{ with_cover }}</b><span>已有封面</span></div>
+    <div class="stat"><b>{{ no_zh }}</b><span>缺中文标题</span></div>
+    <div class="stat"><b>{{ missing_cover }}</b><span>缺封面</span></div>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>r18.dev dump</h2>
+  <table class="data">
+    <tr><th>下载地址</th><td>{{ dump_url }}</td></tr>
+    <tr><th>落盘目录</th><td>{{ dump_dir }}</td></tr>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>任务队列</h2>
+  {% if stats %}
+  <table class="data">
+    <tr><th>阶段</th><th>状态分布</th></tr>
+    {% for stage, by_status in stats.items() %}
+    <tr>
+      <td>{{ stage }}</td>
+      <td>{% for status, n in by_status.items() %}<span class="badge">{{ status }}: {{ n }}</span>{% endfor %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="muted">队列为空。导入 dump 并匹配到文件后，这里会出现补缺口任务。</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>操作</h2>
+  <div class="form-row">
+    <button class="btn" onclick="avlib.enqueue('materialize',{})">番号 → 元数据物化</button>
+    <button class="btn" onclick="avlib.enqueue('materialize',{refresh:true})">重新物化（覆盖空缺）</button>
+    <button class="btn" onclick="avlib.enqueue('javdb/fill',{limit:100})">JavDB 补中文/评分（100 条/批）</button>
+    <button class="btn" onclick="avlib.enqueue('subtitle/sync',{})">字幕 L0：按文件名标记中字</button>
+    <button class="btn" onclick="avlib.enqueue('covers/fill',{limit:30})">下载缺失封面/剧照（30 部/批）</button>
+    <button class="btn" onclick="avlib.enqueue('assets/upscale',{})">升级已有剧照到高清（1920）</button>
+    <button class="btn" onclick="forceRedownload()">强制重下（50 部/批）</button>
+    <button class="btn" onclick="batchScreenshots()">批量生成截图</button>
+    <button class="btn" onclick="avlib.enqueue('nfo/import',{limit:200})">导入 NFO 元数据</button>
+    <button class="btn" onclick="rebuildSearchIndex()">重建搜索索引</button>
+  </div>
+  <p class="muted">
+    物化只处理置信度 ≥ 90 的番号；低于阈值的进待确认，不会污染元数据。
+    「下载缺失封面/剧照」统一处理缺失项：有 URL 的直接下载，没有封面 URL 的会先从 JavDB 抓封面再下载。
+    设置页可开启「自动轮询下载缺失封面/剧照」，后台会自动一批接一批跑。
+  </p>
+</section>
+
+<script>
+async function forceRedownload() {
+  if (!await avlib.confirm('会强制重新下载已有封面/剧照并覆盖现有文件，确定继续吗？', '强制重下')) return;
+  avlib.enqueue('assets/sync', { limit: 50, force: true });
+}
+async function rebuildSearchIndex() {
+  if (!await avlib.confirm('重建搜索索引可能耗时较久，期间搜索功能可能暂时不完整，确定继续吗？', '重建搜索索引')) return;
+  avlib.enqueue('search/rebuild', {});
+}
+async function batchScreenshots() {
+  if (!await avlib.confirm('对非磁带文件批量生成视频截图？每部影片的每个视频文件都会生成，较耗时；每批成功后会自动继续下一批。', '批量生成截图')) return;
+  avlib.enqueue('video-frames/batch', {limit: 50});
+}
+</script>
+
+{% endblock %}

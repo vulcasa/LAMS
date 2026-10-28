@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title %}LAMS{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>介质</h1>
+  <div class="stats">
+    <div class="stat"><b>{{ media_count }}</b><span>媒体库（含磁带）</span></div>
+    <div class="stat"><b>{{ enabled_count }}</b><span>已启用</span></div>
+    <div class="stat"><b>{{ volumes|length }}</b><span>磁带卷</span></div>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>媒体库（NAS 挂载点）</h2>
+  <p class="muted">
+    <span class="badge nas">只读</span>
+    可以添加多个挂载点（例如 <code>/mnt/av</code>、<code>/mnt/av2</code>）。扫描只读取文件名/大小/修改时间，
+    <strong>不会修改、移动或删除 NAS 上的文件</strong>。
+    {% if prefs.auto_scan_new_source %}新增后会自动入队扫描（可在「设置」关闭）。{% else %}新增后不会自动扫描，需要手动点「扫描」。{% endif %}
+  </p>
+  <div class="form-row">
+    <input id="ms-name" placeholder="名称（如 主片库 / 分卷2）" style="min-width:180px">
+    <input id="ms-path" placeholder="容器内路径，如 /mnt/av2" style="min-width:300px">
+    <button class="btn primary" onclick="addSource()">新增介质</button>
+  </div>
+  <div id="ms-result" class="muted"></div>
+
+  {% if sources %}
+  <table class="data" style="margin-top:14px">
+    <tr><th>名称</th><th>路径</th><th>文件数</th><th>最近扫描</th><th>状态</th><th>操作</th></tr>
+    {% for s in sources %}
+    <tr>
+      <td>
+        {{ s.name }}
+        {% if s.origin == 'smb' %}<span class="badge nas">SMB</span>{% endif %}
+        {% if not s.enabled %} <span class="badge">已停用</span>{% endif %}
+      </td>
+      <td class="path">{{ s.path }}{% if not s.exists %} <span class="badge review">不可访问</span>{% endif %}
+        {% if s.smb %}<div class="muted" style="font-size:11px">//{{ s.smb.host }}/{{ s.smb.share }} · {{ s.smb.username }} · {{ '已挂载' if s.smb.mounted else '未挂载' }}</div>{% endif %}
+      </td>
+      <td>{{ s.files }}</td>
+      <td class="nowrap">{{ s.last_scan_at|bjtime if s.last_scan_at else '从未' }}</td>
+      <td class="nowrap">
+        {% if s.last_scan_status == 'ok' %}<span class="badge nas">正常</span>
+        {% elif s.last_scan_status in ('failed','missing') %}<span class="badge review">{{ s.last_scan_status }}</span>
+        {% else %}<span class="badge">{{ s.last_scan_status or '未扫描' }}</span>{% endif %}
+        {% if s.last_error %}<div class="muted" style="font-size:11px">{{ s.last_error[:60] }}</div>{% endif %}
+      </td>
+      <td class="nowrap">
+        <button class="btn" onclick="scanSource({{ s.id }})">扫描</button>
+        {% if s.origin == 'smb' %}
+          {% if s.smb and s.smb.mounted %}
+          <button class="btn" onclick="smbAction({{ s.id }}, 'unmount')">卸载</button>
+          {% else %}
+          <button class="btn" onclick="smbAction({{ s.id }}, 'mount')">挂载</button>
+          {% endif %}
+        {% endif %}
+        <button class="btn" onclick="toggleSource({{ s.id }}, {{ 'false' if s.enabled else 'true' }})">{{ '停用' if s.enabled else '启用' }}</button>
+        <button class="btn" onclick="removeSource({{ s.id }}, false)">移除</button>
+        <button class="btn" onclick="removeSource({{ s.id }}, true)">清索引并移除</button>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="muted">还没有媒体库。上面填一个 NAS 挂载点路径即可新增。</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>SMB 挂载（无需重启容器）</h2>
+  <p class="muted">
+    运行时用 <code>mount.cifs</code> 把 SMB 共享挂到容器内，再登记为媒体库并自动扫描。
+    需要镜像/容器安装 <code>cifs-utils</code> 并具备 <code>CAP_SYS_ADMIN</code>（Docker 需 privileged 或 --cap-add SYS_ADMIN）。
+  </p>
+  <div class="form-row">
+    <input id="smb-name" placeholder="名称（如 客厅NAS）" style="min-width:150px">
+    <input id="smb-host" placeholder="IP / 主机名，如 192.168.2.10" style="min-width:190px">
+    <input id="smb-share" placeholder="共享名，如 media/av" style="min-width:170px">
+    <input id="smb-username" placeholder="SMB 用户名" style="min-width:140px">
+    <input id="smb-password" type="password" placeholder="SMB 密码" style="min-width:140px">
+  </div>
+  <div class="form-row">
+    <input id="smb-path" placeholder="容器内挂载点（留空 = /mnt/smb/主机_共享）" style="min-width:300px">
+    <select id="smb-vers" style="width:auto">
+      <option value="3.0">SMB 3.0（推荐）</option>
+      <option value="2.1">SMB 2.1</option>
+      <option value="2.0">SMB 2.0</option>
+      <option value="1.0">SMB 1.0（老设备）</option>
+    </select>
+    <button class="btn primary" onclick="mountSmb()">挂载并加入媒体库</button>
+    <span class="muted" id="smb-result"></span>
+  </div>
+</section>
+
+
+<script>
+async function post(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+  return [r.ok, await r.json().catch(() => ({}))];
+}
+async function addSource() {
+  const name = document.getElementById('ms-name').value.trim();
+  const path = document.getElementById('ms-path').value.trim();
+  const [ok, data] = await post('/api/sources', { name, path });
+  const el = document.getElementById('ms-result');
+  if (ok && data.ok) {
+    el.textContent = data.job_id ? `已新增并开始扫描（job #${data.job_id}）` : (data.warning || '已新增');
+    setTimeout(() => location.reload(), 800);
+  } else {
+    el.textContent = '新增失败：' + (data.error || JSON.stringify(data));
+  }
+}
+async function mountSmb() {
+  const payload = {
+    name: document.getElementById('smb-name').value.trim(),
+    host: document.getElementById('smb-host').value.trim(),
+    share: document.getElementById('smb-share').value.trim(),
+    mount_path: document.getElementById('smb-path').value.trim(),
+    username: document.getElementById('smb-username').value.trim(),
+    password: document.getElementById('smb-password').value,
+    options: 'vers=' + document.getElementById('smb-vers').value +
+             ',iocharset=utf8,uid=0,gid=0,file_mode=0664,dir_mode=0775',
+    auto_scan: true,
+  };
+  const el = document.getElementById('smb-result');
+  el.textContent = '挂载中…';
+  const [ok, data] = await post('/api/sources/smb', payload);
+  if (ok && data.ok) {
+    el.textContent = '挂载成功：' + data.mount_path + (data.job_id ? '，已入队扫描' : '');
+    setTimeout(() => location.reload(), 1000);
+  } else {
+    el.textContent = '失败：' + (data.error || JSON.stringify(data));
+  }
+}
+async function smbAction(id, action) {
+  const [ok, data] = await post(`/api/sources/${id}/smb/${action}`, {});
+  await avlib.alert(ok && data.ok ? (data.message || '完成') : '失败：' + (data.error || JSON.stringify(data)), ok && data.ok ? '操作成功' : '操作失败');
+  if (ok) location.reload();
+}
+async function scanSource(id) {
+  const [ok, data] = await post(`/api/sources/${id}/scan`, {});
+  await avlib.alert(ok && data.ok ? `已入队 job #${data.job_id}` : '失败：' + (data.error || JSON.stringify(data)), ok && data.ok ? '任务已入队' : '操作失败');
+  if (ok) setTimeout(() => location.reload(), 800);
+}
+async function toggleSource(id, enabled) {
+  const [ok, data] = await post(`/api/sources/${id}/enabled`, { enabled });
+  if (!ok) await avlib.alert('失败：' + (data.error || JSON.stringify(data)), '操作失败');
+  else location.reload();
+}
+async function removeSource(id, purge) {
+  if (!await avlib.confirm(purge ? '移除媒体库并删除已建立的索引？（不会动 NAS 文件）' : '仅移除媒体库，保留已建立的索引？', '移除媒体库')) return;
+  const r = await fetch(`/api/sources/${id}?purge=${purge ? 1 : 0}`, { method: 'DELETE' });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) await avlib.alert('失败：' + (data.error || JSON.stringify(data)), '操作失败');
+  else location.reload();
+}
+</script>
+{% endblock %}

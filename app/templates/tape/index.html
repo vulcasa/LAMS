@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}LAMS{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>磁带控制</h1>
+  {% if error %}<p class="muted">状态读取失败：{{ error }}</p>{% endif %}
+  <div class="stats">
+    <div class="stat"><b>{{ '已连接' if status.device_exists else '未检测到' }}</b><span>磁带设备</span></div>
+    <div class="stat"><b>{{ '已挂载' if status.mounted else '未挂载' }}</b><span>挂载状态</span></div>
+    <div class="stat"><b>{{ status.barcode or '—' }}</b><span>当前磁带</span></div>
+    <div class="stat"><b>{{ adapter }}</b><span>适配器</span></div>
+    <div class="stat"><b class="small">{{ device }}</b><span>LTFS 设备</span></div>
+    <div class="stat"><b class="small">{{ mount }}</b><span>LTFS 挂载点（{{ '已挂载' if status.mounted else '未挂载' }}）</span></div>
+    <div class="stat"><b>{{ '可用' if ltfs_available else '缺失' }}</b><span>LTFS 命令</span></div>
+  </div>
+
+  <div class="form-row">
+    <select id="expect-barcode" style="width:160px;min-width:160px;flex:0 0 160px">
+      <option value="">不校验（默认）</option>
+      {% for barcode in barcode_options %}<option value="{{ barcode }}">{{ barcode }}</option>{% endfor %}
+    </select>
+    <button class="btn primary" onclick="tapeOp('mount')">挂载当前插入的磁带</button>
+    <button class="btn" onclick="tapeOp('unmount')">卸载</button>
+    <button class="btn danger" onclick="tapeOp('eject')">弹出</button>
+  </div>
+  <p class="muted">挂载是挂"当前插入的那盘"，不能指定条码；填了预期条码会做防串盘比对，不符会自动卸载并弹出。</p>
+</section>
+
+<section class="panel">
+  <h2>磁带卷</h2>
+  {% if volumes %}
+  <table class="data">
+    <tr><th>条码</th><th>状态</th><th>文件数</th><th>最近挂载</th><th>最近扫描</th><th>操作</th></tr>
+    {% for row in volumes %}
+    <tr>
+      <td>{{ row.volume.ref }}</td>
+      <td>{{ row.volume.status or '—' }}</td>
+      <td>{{ row.files }}</td>
+      <td class="nowrap">{{ row.volume.last_mounted_at|bjtime if row.volume.last_mounted_at else '—' }}</td>
+      <td class="nowrap">{{ row.volume.last_scan_at|bjtime if row.volume.last_scan_at else '—' }}</td>
+      <td class="nowrap">
+        <button class="btn" onclick="avlib.enqueue('audit/tape',{barcode:'{{ row.volume.ref }}',expected_barcode:'{{ row.volume.ref }}'})">盘点</button>
+        <button class="btn" onclick="avlib.enqueue('integrity/hash',{volume_id:{{ row.volume.id }},limit:100,verify:true})">哈希抽检</button>
+        <button class="btn" onclick="hashWithFrames({{ row.volume.id }})">哈希+抽帧</button>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="muted">还没有登记磁带。插带 → 挂载 → 盘点，会自动登记。</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>最近操作</h2>
+  {% if ops %}
+  <table class="data">
+    <tr><th>时间</th><th>类型</th><th>状态</th><th>条码</th><th>信息</th><th>耗时</th></tr>
+    {% for o in ops %}
+    <tr>
+      <td class="nowrap">{{ o.started_at|bjtime }}</td>
+      <td>{{ o.op_type }}</td>
+      <td>{{ o.status }}</td>
+      <td>{{ o.barcode or '—' }}</td>
+      <td>{{ (o.message or '')[:80] }}</td>
+      <td class="nowrap">{{ (o.duration_ms ~ ' ms') if o.duration_ms is not none else '—' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="muted">暂无操作记录。</p>
+  {% endif %}
+</section>
+
+
+<script>
+async function hashWithFrames(volumeId) {
+  if (!await avlib.confirm('会实际读带并对视频抽帧，可能很慢，继续？', '哈希 + 抽帧')) return;
+  avlib.enqueue('integrity/hash', {volume_id: volumeId, limit: 100, verify: true, with_frames: true, max_videos: 10});
+}
+
+async function tapeOp(action) {
+  if (action === 'unmount') {
+    if (!await avlib.confirm('确定要卸载当前磁带吗？卸载后磁带仍保持插入状态。', '卸载磁带')) return;
+  } else if (action === 'eject') {
+    if (!await avlib.confirm('确定要弹出当前磁带吗？请确认磁带已卸载且机柜门/磁带机状态允许弹出。', '弹出磁带')) return;
+  }
+  const body = action === 'mount'
+    ? { expected_barcode: document.getElementById('expect-barcode').value || null }
+    : {};
+  const r = await fetch('/api/tape/' + action, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+  });
+  const data = await r.json().catch(() => ({}));
+  await avlib.alert((data.ok ? '成功：' : '失败：') + (data.message || data.error || JSON.stringify(data)), data.ok ? '操作成功' : '操作失败');
+  location.reload();
+}
+</script>
+{% endblock %}

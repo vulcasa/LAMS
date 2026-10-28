@@ -1,0 +1,445 @@
+{% extends "base.html" %}
+{% block title %}LAMS{% endblock %}
+{% block content %}
+<div class="activity-layout">
+<div class="activity-main">
+<section class="panel">
+  <div style="display:flex;align-items:baseline;justify-content:space-between">
+    <h1 style="margin:0">活动</h1>
+    <span class="muted" id="updated">—</span>
+  </div>
+  <div class="stats" style="margin-top:14px">
+    <div class="stat"><b id="st-titles">—</b><span>片库条目</span></div>
+    <div class="stat"><b id="st-files">—</b><span>索引文件</span></div>
+    <div class="stat"><b id="st-sources">—</b><span>媒体库</span></div>
+    <div class="stat"><b id="st-queued">—</b><span>排队任务</span></div>
+    <div class="stat"><b id="st-worker">—</b><span>后台线程</span></div>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>正在活动</h2>
+  <div class="activity-row">
+    <div id="running"><p class="muted">当前没有运行中的任务。</p></div>
+  </div>
+  <div class="activity-row">
+    <h3>磁带操作</h3>
+    <div id="tape-ops"><p class="muted">没有正在执行的磁带操作。</p></div>
+  </div>
+  <div class="activity-row">
+    <h3>正在播放</h3>
+    <div id="playing-sessions"><p class="muted">当前没有正在播放的影片。</p></div>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>最近完成</h2>
+  <div id="recent"><p class="muted">暂无记录。</p></div>
+</section>
+</div>
+
+<aside class="monitor-pane panel">
+  <div class="monitor-head">
+    <h2>监控</h2>
+    <span class="monitor-live"><i></i><span id="mon-updated">连接中…</span></span>
+  </div>
+  <div class="monitor-cards">
+    <div class="monitor-card"><span>CPU</span><b id="mon-cpu">—</b><small id="mon-cpu-sub">—</small></div>
+    <div class="monitor-card"><span>负载</span><b id="mon-load">—</b><small id="mon-load-sub">1 / 5 / 15 分钟</small></div>
+    <div class="monitor-card"><span>内存</span><b id="mon-mem">—</b><small id="mon-mem-sub">—</small></div>
+    <div class="monitor-card"><span>在线</span><b id="mon-users">—</b><small id="mon-users-sub">访问人数</small></div>
+  </div>
+  <div class="monitor-chart">
+    <div class="monitor-chart-head"><span>CPU 使用率</span><em id="mon-cpu-now">—</em></div>
+    <canvas id="mon-cpu-chart" height="62"></canvas>
+  </div>
+  <div class="monitor-chart">
+    <div class="monitor-chart-head"><span>内存使用</span><em id="mon-mem-now">—</em></div>
+    <canvas id="mon-mem-chart" height="62"></canvas>
+  </div>
+  <div class="monitor-chart">
+    <div class="monitor-chart-head"><span>网络</span><em id="mon-net-now">—</em></div>
+    <canvas id="mon-net-chart" height="62"></canvas>
+    <div class="monitor-legend"><span class="rx">↓ 接收</span><span class="tx">↑ 发送</span></div>
+  </div>
+  <p class="monitor-note">每 5 秒刷新 · 在线人数为该 IP 最近 2 分钟访问</p>
+</aside>
+</div>
+
+<style>
+.activity-layout { display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:16px; align-items:start; }
+.activity-main { min-width:0; }
+.monitor-pane { position:static; align-self:start; padding:14px 15px; }
+.monitor-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+.monitor-head h2 { margin:0; font-size:15px; }
+.monitor-live { display:inline-flex; align-items:center; gap:5px; color:var(--muted); font-size:11px; }
+.monitor-live i { width:6px; height:6px; border-radius:50%; background:#5ad19a; box-shadow:0 0 0 3px rgba(90,209,154,.12); }
+.monitor-cards { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px; }
+.monitor-card { background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:9px 10px; min-width:0; }
+.monitor-card span { display:block; color:var(--muted); font-size:11px; }
+.monitor-card b { display:block; font-size:18px; margin-top:3px; white-space:nowrap; }
+.monitor-card small { display:block; color:var(--muted); font-size:10.5px; margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.monitor-chart { margin-top:10px; }
+.monitor-chart-head { display:flex; justify-content:space-between; color:var(--muted); font-size:11px; margin-bottom:4px; }
+.monitor-chart-head em { color:var(--accent2); font-style:normal; font-weight:600; }
+.monitor-chart canvas { display:block; width:100%; height:62px; background:rgba(0,0,0,.12); border-radius:6px; }
+.monitor-legend { display:flex; gap:12px; font-size:10.5px; color:var(--muted); margin-top:4px; }
+.monitor-legend .rx { color:#6ea8fe; } .monitor-legend .tx { color:#c792ea; }
+.playing-session {
+  display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+  padding:8px 10px; border-bottom:1px solid var(--line); font-size:12.5px;
+}
+.playing-session:last-child { border-bottom:0; }
+.playing-ip { color:var(--accent2); font-family:ui-monospace,Menlo,monospace; font-size:12px; }
+.playing-title { min-width:180px; }
+.playing-title b { color:var(--accent2); margin-right:6px; }
+.playing-file { color:var(--muted); font-size:11.5px; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.playing-progress { color:var(--muted); font-size:11.5px; white-space:nowrap; }
+.monitor-note { color:var(--muted); font-size:10.5px; margin:10px 0 0; line-height:1.5; }
+@media (max-width: 1080px) { .activity-layout { grid-template-columns:1fr; } }
+.act-card { display:flex; gap:14px; align-items:center; background:var(--bg3); border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-bottom:10px; min-height:72px; }
+.activity-row { min-height:92px; display:flex; flex-direction:column; justify-content:center; padding:10px 0; border-top:1px solid var(--line); }
+.activity-row:first-of-type { border-top:0; padding-top:2px; }
+.activity-row h3 { margin:0 0 6px; }
+#running, #tape-ops, #playing-sessions { display:block; }
+#running > p, #tape-ops > p, #playing-sessions > p { margin:0; line-height:1.5; }
+#running .act-card:last-child, #tape-ops .act-card:last-child, #playing-sessions .act-card:last-child { margin-bottom:0; }
+.act-icon { width:38px; height:38px; border-radius:10px; background:rgba(110,168,254,.14); display:flex; align-items:center; justify-content:center; font-size:18px; flex:0 0 auto; }
+.act-main { flex:1; min-width:0; }
+.act-top { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.act-actions { display:flex; gap:6px; margin-left:8px; flex:0 0 auto; }
+.act-actions .btn { height:26px; padding:0 10px; font-size:12px; border-radius:6px; }
+.act-title { font-weight:600; }
+.act-sub { color:var(--muted); font-size:12px; margin-top:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.act-elapsed { margin-left:auto; color:var(--muted); font-size:12px; flex:0 0 auto; }
+.act-pct { color:var(--accent2); font-size:12px; font-weight:600; flex:0 0 auto; }
+.act-bar { height:6px; background:var(--bg); border-radius:3px; margin-top:8px; overflow:hidden; }
+.act-bar i { display:block; height:100%; background:var(--accent2); }
+.act-bar.indeterminate i { width:35%; animation: actslide 1.2s infinite ease-in-out; }
+@keyframes actslide { 0%{margin-left:-35%} 100%{margin-left:100%} }
+</style>
+
+<script>
+function bjTime(value) {
+  if (!value) return '—';
+  // 后端序列化的是 UTC naive ISO；补 Z 再按北京时间显示
+  var text = String(value);
+  if (value.indexOf('+') < 0 && !text.endsWith('Z')) text += 'Z';
+  var date = new Date(text);
+  if (isNaN(date)) return String(value).replace('T', ' ').slice(0, 19);
+  return date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false });
+}
+function fmtBytes(n) {
+  if (!n) return '';
+  const u = ['B','KB','MB','GB','TB']; let i = 0;
+  while (n >= 1024 && i < u.length-1) { n /= 1024; i++; }
+  return n.toFixed(1) + u[i];
+}
+function fmtElapsed(s) {
+  if (s == null) return '';
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 's';
+  return Math.floor(s/3600) + 'h ' + Math.floor((s%3600)/60) + 'm';
+}
+function esc(x) { return String(x == null ? '' : x).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function card(j) {
+  const paused = j.status === 'paused';
+  const stopping = j.cancel_requested;
+  const pct = j.total > 0 ? Math.min(100, Math.round(j.progress * 100 / j.total)) : null;
+  const prog = j.unit === 'bytes'
+    ? (fmtBytes(j.progress) + (j.total ? ' / ' + fmtBytes(j.total) : ''))
+    : (j.total ? `${j.progress} / ${j.total}` : (j.progress || ''));
+  const sub = [j.message, prog].filter(Boolean).join(' · ');
+  const pctLabel = pct === null ? '' : `<span class="act-pct">${pct}%</span>`;
+  const actions = stopping
+    ? '<span class="badge review">停止中…</span>'
+    : `<span class="act-actions">
+         <button class="btn" onclick="jobControl(${j.id}, '${paused ? 'resume' : 'pause'}')">${paused ? '开始' : '暂停'}</button>
+         <button class="btn" onclick="jobControl(${j.id}, 'stop')">停止</button>
+       </span>`;
+  return `<div class="act-card">
+    <div class="act-icon">${paused ? '⏸' : '⏳'}</div>
+    <div class="act-main">
+      <div class="act-top"><span class="act-title">${esc(j.label)}</span>
+        <span class="badge">#${j.id}</span>
+        ${paused ? '<span class="badge">已暂停</span>' : ''}
+        ${pctLabel}
+        <span class="act-elapsed">${fmtElapsed(j.elapsed_s)}</span>
+        ${actions}</div>
+      <div class="act-sub">${esc(sub || '运行中…')}</div>
+      ${pct === null ? '<div class="act-bar indeterminate"><i></i></div>' : `<div class="act-bar"><i style="width:${pct}%"></i></div>`}
+    </div>
+  </div>`;
+}
+
+async function jobControl(jobId, action) {
+  const r = await fetch('/api/jobs/' + jobId + '/' + action, { method: 'POST' });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok || data.ok === false) {
+    await avlib.alert(data.error || '操作失败', '任务控制失败');
+  }
+  refresh();
+}
+
+async function refresh() {
+  try {
+    const r = await fetch('/api/activity');
+    const d = await r.json();
+    document.getElementById('st-titles').textContent = d.stats.titles;
+    document.getElementById('st-files').textContent = d.stats.files;
+    document.getElementById('st-sources').textContent = d.stats.sources + (d.stats.sources_error ? `（${d.stats.sources_error} 异常）` : '');
+    document.getElementById('st-queued').textContent = d.queued;
+    const w = d.worker || {};
+    document.getElementById('st-worker').textContent = w.alive ? '正常' : '停止';
+    document.getElementById('st-worker').style.color = w.alive ? '' : '#e08585';
+    document.getElementById('updated').textContent = '每 2 秒刷新 · ' + bjTime(d.now);
+
+    const playing = d.playing || [];
+    const playingEl = document.getElementById('playing-sessions');
+    if (!playing.length) {
+      playingEl.innerHTML = '<p class="muted">当前没有正在播放的影片。</p>';
+    } else {
+      playingEl.innerHTML = playing.map(p => `<div class="playing-session">
+        <span class="playing-ip">${esc(p.ip)}</span>
+        <span class="playing-title"><b>${esc(p.dvd_id)}</b> ${esc(p.title_name)}</span>
+        <span class="playing-file">${esc(p.file_name)}</span>
+        <span class="playing-progress">${p.percent == null ? '—' : p.percent + '%'}${p.paused ? ' · 已暂停' : ''}</span>
+      </div>`).join('');
+    }
+    const run = document.getElementById('running');
+    const items = (d.running || []).map(card);
+    if (d.tape_ops && d.tape_ops.length) {
+      for (const op of d.tape_ops) {
+        items.push(`<div class="act-card"><div class="act-icon">📼</div><div class="act-main">
+          <div class="act-top"><span class="act-title">${esc(op.op_type)} ${op.barcode ? '· ' + esc(op.barcode) : ''}</span>
+          <span class="act-elapsed">${fmtElapsed(op.elapsed_s)}</span></div>
+          <div class="act-sub">${esc(op.message || '执行中…')}</div>
+          <div class="act-bar indeterminate"><i></i></div></div></div>`);
+      }
+    }
+    run.innerHTML = items.length ? items.join('') : '<p class="muted">当前没有运行中的任务。</p>';
+
+    const recent = d.recent || [];
+    const el = document.getElementById('recent');
+    if (!recent.length) { el.innerHTML = '<p class="muted">暂无记录。</p>'; }
+    else {
+      el.innerHTML = '<table class="data"><tr><th>任务</th><th>状态</th><th>耗时</th><th>结果</th><th>结束时间</th></tr>' +
+        recent.map(j => `<tr><td>${esc(j.label)} <span class="muted">#${j.id}</span></td>
+          <td>${j.status === 'done' ? '<span class="badge nas">完成</span>' : (j.status === 'cancelled' ? '<span class="badge review">已停止</span>' : '<span class="badge review">失败</span>')}</td>
+          <td class="nowrap">${fmtElapsed(j.elapsed_s)}</td>
+          <td class="muted">${esc(j.summary || j.error || '')}</td>
+          <td class="nowrap">${bjTime(j.finished_at)}</td></tr>`).join('') + '</table>';
+    }
+  } catch (e) { /* 离线忽略 */ }
+}
+refresh();
+setInterval(refresh, 2000);
+
+/* 实例监控：5 秒刷新，Canvas 曲线，无第三方图表库 */
+const monData = { cpu: [], mem: [], rx: [], tx: [], max: 60 };
+const monColors = { cpu: '#6ea8fe', mem: '#5ad19a', rx: '#6ea8fe', tx: '#c792ea' };
+
+function monBytes(n) {
+  if (!n) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = Number(n); let i = 0;
+  while (value >= 1024 && i < units.length - 1) { value /= 1024; i += 1; }
+  return value.toFixed(value >= 10 ? 0 : 1) + ' ' + units[i];
+}
+function monRate(n) { return monBytes(n) + '/s'; }
+
+function monDraw(canvas, series, opts) {
+  if (!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const width = Math.max(100, rect.width || canvas.clientWidth || 280);
+  const height = 62;
+  canvas.width = width * dpr; canvas.height = height * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+  const pad = 3;
+  const max = opts.max || 100;
+  const all = series.flatMap(item => item.data);
+  const realMax = opts.fixedMax ? max : Math.max(max, ...all, 1);
+  ctx.strokeStyle = 'rgba(255,255,255,.06)';
+  ctx.lineWidth = 1;
+  for (let row = 0; row <= 2; row += 1) {
+    const y = pad + (height - pad * 2) * row / 2;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
+  }
+  const count = 60;
+  series.forEach((line, index) => {
+    const data = line.data.slice(-count);
+    if (!data.length) return;
+    const points = data.map((value, i) => {
+      const x = pad + (width - pad * 2) * (i / Math.max(1, count - 1));
+      const y = height - pad - (height - pad * 2) * Math.min(1, value / realMax);
+      return [x, y];
+    });
+    if (opts.fill && index === 0) {
+      const gradient = ctx.createLinearGradient(0, 0, 0, height);
+      gradient.addColorStop(0, opts.fill);
+      gradient.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.beginPath();
+      ctx.moveTo(points[0][0], height - pad);
+      points.forEach(point => ctx.lineTo(point[0], point[1]));
+      ctx.lineTo(points[points.length - 1][0], height - pad);
+      ctx.closePath(); ctx.fillStyle = gradient; ctx.fill();
+    }
+    ctx.beginPath();
+    points.forEach((point, i) => i ? ctx.lineTo(point[0], point[1]) : ctx.moveTo(point[0], point[1]));
+    ctx.strokeStyle = line.color;
+    ctx.lineWidth = 1.6; ctx.lineJoin = 'round'; ctx.stroke();
+  });
+}
+
+const MON_CACHE_KEY = 'avlib.monitor.v1';
+
+function monPush(key, value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return;
+  monData[key].push(Number(value));
+  if (monData[key].length > monData.max) monData[key].shift();
+}
+
+function monSaveCache(payload) {
+  try {
+    localStorage.setItem(MON_CACHE_KEY, JSON.stringify({
+      payload: payload,
+      cpu: monData.cpu.slice(-monData.max),
+      mem: monData.mem.slice(-monData.max),
+      rx: monData.rx.slice(-monData.max),
+      tx: monData.tx.slice(-monData.max),
+      saved_at: Date.now(),
+    }));
+  } catch (e) { /* ignore quota/private mode */ }
+}
+
+function monDrawCharts() {
+  monDraw(document.getElementById('mon-cpu-chart'), [{ data: monData.cpu, color: monColors.cpu }], { max: 100, fill: 'rgba(110,168,254,.25)' });
+  monDraw(document.getElementById('mon-mem-chart'), [{ data: monData.mem, color: monColors.mem }], { max: 100, fill: 'rgba(90,209,154,.22)' });
+  monDraw(document.getElementById('mon-net-chart'), [
+    { data: monData.rx, color: monColors.rx },
+    { data: monData.tx, color: monColors.tx },
+  ], { max: 1 });
+}
+
+function monRender(data) {
+  const load = data.load || {};
+  const memory = data.memory || {};
+  const network = data.network || {};
+  const users = data.users || {};
+  document.getElementById('mon-cpu').textContent = data.cpu_percent == null ? '—' : Number(data.cpu_percent).toFixed(0) + '%';
+  document.getElementById('mon-cpu-sub').textContent = '实时使用率';
+  document.getElementById('mon-cpu-now').textContent = document.getElementById('mon-cpu').textContent;
+  document.getElementById('mon-load').textContent = load['1'] == null ? '—' : Number(load['1']).toFixed(2);
+  document.getElementById('mon-load-sub').textContent = [load['1'], load['5'], load['15']]
+    .map(value => value == null ? '—' : Number(value).toFixed(2)).join(' / ');
+  document.getElementById('mon-mem').textContent = memory.percent == null ? '—' : Number(memory.percent).toFixed(0) + '%';
+  document.getElementById('mon-mem-sub').textContent = monBytes(memory.used || 0) + ' / ' + monBytes(memory.total || 0);
+  document.getElementById('mon-mem-now').textContent = document.getElementById('mon-mem').textContent;
+  document.getElementById('mon-users').textContent = users.online == null ? '—' : users.online;
+  document.getElementById('mon-users-sub').textContent = '当前请求 ' + (users.active_requests || 0);
+  document.getElementById('mon-net-now').textContent = '↓' + monRate(network.rx_bps || 0) + '  ↑' + monRate(network.tx_bps || 0);
+  monDrawCharts();
+}
+
+function restoreMonitorCache() {
+  try {
+    const raw = localStorage.getItem(MON_CACHE_KEY);
+    if (!raw) return false;
+    const cache = JSON.parse(raw);
+    if (!cache || !cache.payload) return false;
+    monData.cpu = Array.isArray(cache.cpu) ? cache.cpu.slice(-monData.max) : [];
+    monData.mem = Array.isArray(cache.mem) ? cache.mem.slice(-monData.max) : [];
+    monData.rx = Array.isArray(cache.rx) ? cache.rx.slice(-monData.max) : [];
+    monData.tx = Array.isArray(cache.tx) ? cache.tx.slice(-monData.max) : [];
+    monRender(cache.payload);
+    const saved = cache.saved_at ? new Date(cache.saved_at).toLocaleTimeString('zh-CN', { hour12: false }) : '—';
+    document.getElementById('mon-updated').textContent = '上次数据 · ' + saved;
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function refreshMonitor() {
+  try {
+    const response = await fetch('/api/monitor');
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const data = await response.json();
+    monPush('cpu', data.cpu_percent);
+    monPush('mem', data.memory && data.memory.percent);
+    monPush('rx', data.network ? data.network.rx_bps : null);
+    monPush('tx', data.network ? data.network.tx_bps : null);
+    monRender(data);
+    monSaveCache(data);
+    document.getElementById('mon-updated').textContent = '每 5 秒 · ' + new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  } catch (error) {
+    document.getElementById('mon-updated').textContent = '监控离线' + (localStorage.getItem(MON_CACHE_KEY) ? '（显示缓存）' : '');
+  }
+}
+
+function alignActivityPanel() {
+  // 页面顶部未滚动时，把「正在活动」撑到与右侧监控下沿对齐
+  const sections = document.querySelectorAll('.activity-main > section.panel');
+  const activity = sections[1];
+  if (!activity) return;
+  if (window.innerWidth <= 1080) { activity.style.minHeight = ''; return; }
+  if (window.scrollY > 2) return;
+  const monitor = document.querySelector('.monitor-pane');
+  if (!monitor) return;
+  const monitorRect = monitor.getBoundingClientRect();
+  const activityRect = activity.getBoundingClientRect();
+  activity.style.minHeight = Math.max(0, Math.round(monitorRect.bottom - activityRect.top)) + 'px';
+}
+
+async function refreshMonitor() {
+  try {
+    const response = await fetch('/api/monitor');
+    if (!response.ok) throw new Error('HTTP ' + response.status);
+    const data = await response.json();
+    const load = data.load || {};
+    const memory = data.memory || {};
+    const network = data.network || {};
+    const users = data.users || {};
+    monPush('cpu', data.cpu_percent == null ? 0 : data.cpu_percent);
+    monPush('mem', memory.percent == null ? 0 : memory.percent);
+    monPush('rx', network.rx_bps || 0);
+    monPush('tx', network.tx_bps || 0);
+
+    document.getElementById('mon-cpu').textContent = data.cpu_percent == null ? '—' : data.cpu_percent.toFixed(0) + '%';
+    document.getElementById('mon-cpu-sub').textContent = '实时使用率';
+    document.getElementById('mon-cpu-now').textContent = document.getElementById('mon-cpu').textContent;
+    document.getElementById('mon-load').textContent = load['1'] == null ? '—' : Number(load['1']).toFixed(2);
+    document.getElementById('mon-load-sub').textContent = [load['1'], load['5'], load['15']]
+      .map(value => value == null ? '—' : Number(value).toFixed(2)).join(' / ');
+    document.getElementById('mon-mem').textContent = memory.percent == null ? '—' : memory.percent.toFixed(0) + '%';
+    document.getElementById('mon-mem-sub').textContent = monBytes(memory.used || 0) + ' / ' + monBytes(memory.total || 0);
+    document.getElementById('mon-mem-now').textContent = document.getElementById('mon-mem').textContent;
+    document.getElementById('mon-users').textContent = users.online == null ? '—' : users.online;
+    document.getElementById('mon-users-sub').textContent = '当前请求 ' + (users.active_requests || 0);
+    document.getElementById('mon-net-now').textContent = '↓' + monRate(network.rx_bps || 0) + '  ↑' + monRate(network.tx_bps || 0);
+    document.getElementById('mon-updated').textContent = '每 5 秒 · ' + new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    monDraw(document.getElementById('mon-cpu-chart'), [{ data: monData.cpu, color: monColors.cpu }], { max: 100, fill: 'rgba(110,168,254,.25)' });
+    monDraw(document.getElementById('mon-mem-chart'), [{ data: monData.mem, color: monColors.mem }], { max: 100, fill: 'rgba(90,209,154,.22)' });
+    monDraw(document.getElementById('mon-net-chart'), [
+      { data: monData.rx, color: monColors.rx },
+      { data: monData.tx, color: monColors.tx },
+    ], { max: 1 });
+  } catch (error) {
+    document.getElementById('mon-updated').textContent = '监控离线';
+  }
+}
+restoreMonitorCache();
+alignActivityPanel();
+refreshMonitor();
+setInterval(refreshMonitor, 5000);
+window.addEventListener('resize', () => {
+  alignActivityPanel();
+  monDrawCharts();
+});
+
+</script>
+{% endblock %}

@@ -1,0 +1,526 @@
+{% extends "base.html" %}
+{% block title %}LAMS{% endblock %}
+
+{% block content %}
+<div class="detail-toolbar">
+  <button class="btn small" type="button" onclick="goBack()">← 返回</button>
+</div>
+<div class="detail">
+  <div class="detail-cover">
+    {% if title.cover_local %}
+      <a class="lightbox-item cover-lightbox" href="{{ url_for('pages.media', filename=title.cover_local) }}"
+         onclick="openLightbox(this.href, '{{ title.dvd_id }} 封面'); return false;">
+        <img src="{{ url_for('pages.media', filename=title.cover_local) }}" alt="{{ title.dvd_id }}">
+      </a>
+    {% else %}
+      <div class="cover-ph big">{{ title.dvd_id }}</div>
+    {% endif %}
+    <div class="badges">
+      {% if title.has_chinese_sub %}<span class="badge sub">中文字幕</span>{% endif %}
+      {% for v in tapes %}<span class="badge tape">磁带 {{ v }}</span>{% endfor %}
+      {% for v in nas_roots %}<span class="badge nas">NAS</span>{% endfor %}
+    </div>
+    <button class="btn small upload-btn" type="button"
+            onclick="document.getElementById('cover-file').click()">上传封面</button>
+    <input type="file" id="cover-file" accept="image/*" style="display:none"
+           onchange="uploadCover(this)">
+    <button class="btn small upload-btn play-movie-btn" type="button"
+            id="playMovieBtn" onclick="playMovie()">▶ 播放影片</button>
+  </div>
+
+  <div class="detail-main">
+    <h1 class="dcode">{{ title.dvd_id }}
+      <button type="button" id="favoriteBtn"
+              class="favorite-star {{ 'active' if title.is_favorite else '' }}"
+              title="{{ '取消收藏' if title.is_favorite else '收藏' }}"
+              onclick="toggleFavorite()">{{ '★' if title.is_favorite else '☆' }}</button>
+    </h1>
+    <h2 class="dtitle">{{ title.title_zh or title.title_ja or title.title_en or '（无标题）' }}</h2>
+    {% if title.title_zh and title.title_ja %}
+      <p class="muted">{{ title.title_ja }}</p>
+    {% endif %}
+
+    {% macro meta_editor(field, value='', kind='text') -%}
+    <button type="button" class="lock-btn" title="解锁编辑" aria-label="解锁编辑"
+            onclick="unlockMeta(this)">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="5" y="11" width="14" height="9" rx="2"></rect>
+        <path d="M8 11V8a4 4 0 0 1 8 0v3"></path>
+      </svg>
+    </button>
+    <span class="meta-editor" hidden>
+      <input class="meta-input" type="{{ kind if kind in ('text', 'date', 'number') else 'text' }}"
+             value="{{ value }}"
+             {% if field == 'rating' %}step="0.01" min="0" max="10"{% endif %}
+             {% if field == 'runtime_mins' %}min="0" max="1000" step="1"{% endif %}>
+      <button type="button" class="btn tiny primary" onclick="saveMeta(this)">保存</button>
+      <button type="button" class="btn tiny" onclick="cancelMeta(this)">取消</button>
+      <span class="meta-error"></span>
+    </span>
+    {%- endmacro %}
+
+    {% set female_names = [] %}
+    {% for a in actresses %}{% set _ = female_names.append(a.display_name()) %}{% endfor %}
+    {% set genre_names = [] %}
+    {% for g in genres %}{% set _ = genre_names.append(g.display_name()) %}{% endfor %}
+
+    <p class="muted meta-hint">默认锁定。点每行右侧的小锁解锁编辑；保存后该片不再被自动刮削覆盖。</p>
+    <div class="form-row import-row" id="import-row">
+      <input id="meta-url" placeholder="粘贴官方作品页 URL（FC2 / CosplayJAV / 欧美厂牌）"
+             style="min-width:360px" disabled>
+      <button id="import-url-btn" type="button" class="btn small" onclick="importMetaUrl(false)" disabled>从网址导入</button>
+      {% if title.dvd_id.startswith('FC2') %}
+      <button id="import-fc2-btn" type="button" class="btn small" onclick="importMetaUrl(true)" disabled>从 FC2 官方页抓取</button>
+      {% endif %}
+      <button type="button" class="lock-btn import-lock" id="import-lock" title="解锁导入" aria-label="解锁导入"
+              onclick="unlockImport()">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="5" y="11" width="14" height="9" rx="2"></rect>
+          <path d="M8 11V8a4 4 0 0 1 8 0v3"></path>
+        </svg>
+      </button>
+      <span class="muted" id="import-result"></span>
+    </div>
+    <table class="meta editable">
+      <tr class="meta-row">
+        <th>标题（中文）</th>
+        <td class="meta-cell" data-field="title_zh">
+          <span class="meta-locked">{{ title.title_zh or '—' }}</span>
+          {{ meta_editor('title_zh', title.title_zh or '', 'text') }}
+        </td>
+      </tr>
+      <tr class="meta-row">
+        <th>原标题（日文）</th>
+        <td class="meta-cell" data-field="title_ja">
+          <span class="meta-locked">{{ title.title_ja or '—' }}</span>
+          {{ meta_editor('title_ja', title.title_ja or '', 'text') }}
+        </td>
+      </tr>
+      <tr class="meta-row">
+        <th>发行日期</th>
+        <td class="meta-cell" data-field="release_date">
+          <span class="meta-locked">{{ title.release_date or '—' }}</span>
+          {{ meta_editor('release_date', title.release_date.isoformat() if title.release_date else '', 'date') }}
+        </td>
+      </tr>
+      <tr class="meta-row">
+        <th>时长</th>
+        <td class="meta-cell" data-field="runtime_mins">
+          <span class="meta-locked">{{ (title.runtime_mins ~ ' 分钟') if title.runtime_mins else '—' }}</span>
+          {{ meta_editor('runtime_mins', title.runtime_mins or '', 'number') }}
+        </td>
+      </tr>
+      <tr class="meta-row">
+        <th>片商</th>
+        <td class="meta-cell" data-field="maker">
+          <span class="meta-locked">{{ title.maker.display_name() if title.maker else '—' }}</span>
+          {{ meta_editor('maker', title.maker.display_name() if title.maker else '', 'text') }}
+        </td>
+      </tr>
+      <tr class="meta-row">
+        <th>厂牌</th>
+        <td class="meta-cell" data-field="label">
+          <span class="meta-locked">{{ title.label.display_name() if title.label else '—' }}</span>
+          {{ meta_editor('label', title.label.display_name() if title.label else '', 'text') }}
+        </td>
+      </tr>
+      <tr class="meta-row">
+        <th>系列</th>
+        <td class="meta-cell" data-field="series">
+          <span class="meta-locked">{{ title.series.display_name() if title.series else '—' }}</span>
+          {{ meta_editor('series', title.series.display_name() if title.series else '', 'text') }}
+        </td>
+      </tr>
+      <tr class="meta-row">
+        <th>导演</th>
+        <td class="meta-cell" data-field="director">
+          <span class="meta-locked">{{ title.director.display_name() if title.director else '—' }}</span>
+          {{ meta_editor('director', title.director.display_name() if title.director else '', 'text') }}
+        </td>
+      </tr>
+      <tr class="meta-row">
+        <th>评分</th>
+        <td class="meta-cell" data-field="rating">
+          <span class="meta-locked">{% if title.rating %}{{ '%.2f'|format(title.rating) }}（{{ title.rating_votes or 0 }} 人）{% else %}—{% endif %}</span>
+          {{ meta_editor('rating', title.rating or '', 'number') }}
+        </td>
+      </tr>
+      <tr class="meta-row">
+        <th>演员</th>
+        <td class="meta-cell" data-field="actresses">
+          <span class="meta-locked">
+            {% for a in actresses %}<a class="chip" href="{{ url_for('library.index', actress=a.id) }}">{{ a.display_name() }}</a>{% endfor %}
+            {% if males %}<span class="muted">（男）</span>{% for a in males %}<span class="chip">{{ a.display_name() }}</span>{% endfor %}{% endif %}
+            {% if not actresses and not males %}—{% endif %}
+          </span>
+          {{ meta_editor('actresses', female_names|join('、'), 'text') }}
+        </td>
+      </tr>
+      <tr class="meta-row">
+        <th>题材</th>
+        <td class="meta-cell" data-field="genres">
+          <span class="meta-locked">
+            {% for g in genres %}<a class="chip" href="{{ url_for('library.index', genre=g.id) }}">{{ g.display_name() }}</a>{% endfor %}
+            {% if not genres %}—{% endif %}
+          </span>
+          {{ meta_editor('genres', genre_names|join('、'), 'text') }}
+        </td>
+      </tr>
+    </table>
+
+    {% if histories %}
+    <details class="history">
+      <summary>编辑历史（最近 {{ histories|length }} 条）</summary>
+      <table class="data history-table">
+        <tr><th>时间</th><th>字段</th><th></th></tr>
+        {% for h in histories %}
+        <tr>
+          <td class="nowrap">{{ h.created_at|bjtime if h.created_at else '—' }}</td>
+          <td>{{ h.field }}</td>
+          <td><button type="button" class="btn tiny" onclick="undoHistory({{ h.id }})">撤销</button></td>
+        </tr>
+        {% endfor %}
+      </table>
+    </details>
+    {% endif %}
+
+    <div class="section-head">
+      <h3>剧照（{{ stills|length }}）</h3>
+      <span>
+        <button class="btn small" type="button"
+                onclick="document.getElementById('stills-files').click()">上传剧照</button>
+        <input type="file" id="stills-files" accept="image/*" multiple style="display:none"
+               onchange="uploadStills(this)">
+      </span>
+    </div>
+    {% if stills %}
+    <div class="stills-grid">
+      {% for s in stills %}
+      <a class="lightbox-item" href="{{ url_for('pages.media', filename=s.local_path) }}"
+         onclick="openLightbox(this.href, '{{ title.dvd_id }} 剧照 {{ loop.index }}'); return false;">
+        <img src="{{ url_for('pages.media', filename=s.local_path) }}"
+             alt="{{ title.dvd_id }} 剧照 {{ loop.index }}" loading="lazy" decoding="async">
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted">暂无剧照。「刮削」页可下载剧照/封面。</p>
+    {% endif %}
+
+    <div class="section-head">
+      <h3>视频截图（{{ screenshots|length }}）</h3>
+      <span>
+        <button class="btn small generate-frames-btn" type="button" onclick="generateFrames()">扫描视频截图</button>
+      </span>
+    </div>
+    {% if screenshots %}
+    <div class="frames-grid">
+      {% for shot in screenshots %}
+      <a class="lightbox-item" href="{{ url_for('pages.media', filename=shot.local_path) }}"
+         onclick="openLightbox(this.href, '{{ title.dvd_id }} 视频截图 {{ loop.index }}'); return false;">
+        <img src="{{ url_for('pages.media', filename=shot.local_path) }}"
+             alt="{{ title.dvd_id }} 视频截图 {{ loop.index }}" loading="lazy" decoding="async">
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted">每个可访问的视频文件都会各生成设定数量的截图（多文件影片会分别抽帧）。</p>
+    {% endif %}
+
+    <h3>文件位置（{{ files|length }}）</h3>
+    {% if files %}
+    <table class="files">
+      <tr><th>介质</th><th>路径</th><th>大小</th><th>置信度</th><th>修改时间</th></tr>
+      {% for f in files %}
+      <tr>
+        <td>{% if f.volume.kind == 'tape' %}<span class="badge tape">{{ f.volume.ref }}</span>{% else %}<span class="badge nas">NAS</span>{% endif %}</td>
+        <td class="path">{{ f.rel_path }}</td>
+        <td class="nowrap">{{ f.size|filesizeformat if f.size }}</td>
+        <td class="nowrap">{% if f.confidence is not none %}{{ f.confidence }}{% if f.confidence < 90 %}<span class="badge review" style="margin-left:6px">待抽检</span>{% endif %}{% else %}—{% endif %}</td>
+        <td class="nowrap">{{ f.mtime|bjtime if f.mtime else '—' }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p class="muted">暂无关联文件（元数据可能先于文件入库）。</p>
+    {% endif %}
+
+    <h3>字幕（{{ subtitles|length }}）</h3>
+    {% if subtitles %}
+    <ul class="plain">
+      {% for s in subtitles %}
+      <li>{{ s.source }} · {{ s.format }} · <span class="muted">{{ s.quality_flag or 'unknown' }}</span></li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="muted">无外挂字幕。{% if title.has_chinese_sub %}文件名标记为中字版。{% endif %}</p>
+    {% endif %}
+  </div>
+</div>
+<div id="frame-modal" class="avlib-modal" hidden role="dialog" aria-modal="true"
+     aria-label="视频截图任务" onclick="if (event.target === this) closeFrameModal()">
+  <div class="avlib-modal-box">
+    <div class="avlib-modal-head">
+      <b>视频截图任务</b>
+      <button type="button" class="lightbox-close" aria-label="关闭" onclick="closeFrameModal()">×</button>
+    </div>
+    <p id="frame-modal-message" class="muted"></p>
+    <div class="avlib-modal-actions">
+      <a class="btn" href="/activity">查看活动</a>
+      <button type="button" class="btn primary" onclick="closeFrameModal()">知道了</button>
+    </div>
+  </div>
+</div>
+<div id="lightbox" class="lightbox" hidden role="dialog" aria-modal="true" aria-label="查看大图"
+     onclick="if (event.target === this) closeLightbox()">
+  <button type="button" class="lightbox-close" aria-label="关闭" onclick="closeLightbox()">×</button>
+  <button type="button" class="lightbox-prev" aria-label="上一张" onclick="lightboxStep(-1)">‹</button>
+  <img id="lightbox-img" alt="">
+  <button type="button" class="lightbox-next" aria-label="下一张" onclick="lightboxStep(1)">›</button>
+  <div id="lightbox-caption" class="lightbox-caption"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function unlockMeta(button) {
+  const cell = button.closest('.meta-cell');
+  if (!cell) return;
+  cell.querySelector('.meta-locked').hidden = true;
+  button.hidden = true;
+  const editor = cell.querySelector('.meta-editor');
+  editor.hidden = false;
+  const input = editor.querySelector('.meta-input');
+  input.focus();
+  input.select && input.select();
+  input.onkeydown = (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      saveMeta(editor.querySelector('.btn.primary'));
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelMeta(editor.querySelector('.btn'));
+    }
+  };
+}
+
+function cancelMeta(button) {
+  const cell = button.closest('.meta-cell');
+  cell.querySelector('.meta-editor').hidden = true;
+  cell.querySelector('.meta-locked').hidden = false;
+  cell.querySelector('.lock-btn').hidden = false;
+  const error = cell.querySelector('.meta-error');
+  if (error) error.textContent = '';
+}
+
+async function saveMeta(button) {
+  const cell = button.closest('.meta-cell');
+  const field = cell.dataset.field;
+  const input = cell.querySelector('.meta-input');
+  const error = cell.querySelector('.meta-error');
+  error.textContent = '';
+  const response = await fetch('/api/titles/{{ title.id }}/metadata', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ field: field, value: input.value })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    error.textContent = data.error || '保存失败';
+    return;
+  }
+  // 保存成功后重新载入（标题/关联 chip 都需要服务端重新渲染）
+  location.reload();
+}
+
+function showFrameModal(message) {
+  const box = document.getElementById('frame-modal');
+  document.getElementById('frame-modal-message').textContent = message;
+  box.hidden = false;
+}
+function closeFrameModal() {
+  document.getElementById('frame-modal').hidden = true;
+}
+async function generateFrames() {
+  const response = await fetch('/api/titles/{{ title.id }}/video-frames', { method: 'POST' });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) { showFrameModal(data.error || '提交失败'); return; }
+  showFrameModal('已入队视频截图任务 #' + data.job_id +
+    '；每个视频文件按设置数量生成，可在「活动」页查看进度，完成后刷新本页。');
+}
+
+var lightboxItems = [];
+var lightboxIndex = -1;
+
+function collectLightboxItems() {
+  lightboxItems = Array.from(document.querySelectorAll('a.lightbox-item'));
+}
+
+function openLightbox(url, caption) {
+  collectLightboxItems();
+  const box = document.getElementById('lightbox');
+  const image = document.getElementById('lightbox-img');
+  lightboxIndex = lightboxItems.findIndex(item => item.href === url);
+  if (lightboxIndex < 0) {
+    // 封面可能不在缩略图列表里，单独打开
+    lightboxItems = [{ href: url, dataset: {} }];
+    lightboxIndex = 0;
+  }
+  image.src = url;
+  image.alt = caption || '';
+  document.getElementById('lightbox-caption').textContent = caption || '';
+  box.hidden = false;
+  document.body.classList.add('lightbox-open');
+  document.querySelector('.lightbox-close').focus();
+}
+
+function closeLightbox() {
+  const box = document.getElementById('lightbox');
+  box.hidden = true;
+  document.getElementById('lightbox-img').src = '';
+  document.body.classList.remove('lightbox-open');
+}
+
+function lightboxStep(delta) {
+  if (!lightboxItems.length) return;
+  lightboxIndex = (lightboxIndex + delta + lightboxItems.length) % lightboxItems.length;
+  const item = lightboxItems[lightboxIndex];
+  const image = item.querySelector ? item.querySelector('img') : null;
+  openLightbox(item.href, (image && image.alt) || item.textContent.trim());
+}
+
+document.addEventListener('keydown', function (event) {
+  const box = document.getElementById('lightbox');
+  if (!box || box.hidden) return;
+  if (event.key === 'Escape') closeLightbox();
+  if (event.key === 'ArrowLeft') lightboxStep(-1);
+  if (event.key === 'ArrowRight') lightboxStep(1);
+});
+
+function goBack() {
+  const sameOriginReferrer = document.referrer &&
+    new URL(document.referrer, location.href).origin === location.origin;
+  if (sameOriginReferrer && history.length > 1) history.back();
+  else location.href = '/library';
+}
+
+async function toggleFavorite() {
+  const button = document.getElementById('favoriteBtn');
+  if (!button) return;
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/titles/{{ title.id }}/favorite', { method: 'POST' });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      await avlib.alert(data.error || '收藏操作失败', '收藏失败');
+      return;
+    }
+    button.classList.toggle('active', !!data.favorite);
+    button.textContent = data.favorite ? '★' : '☆';
+    button.title = data.favorite ? '取消收藏' : '收藏';
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function playMovie() {
+  const button = document.getElementById('playMovieBtn');
+  if (!button) return;
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/titles/{{ title.id }}/playback');
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      await avlib.alert(data.message || data.error || '播放检查失败', '无法播放');
+      return;
+    }
+    if (data.status === 'playable' && data.url) {
+      location.href = data.url;
+      return;
+    }
+    await avlib.alert(data.message || '当前无法播放该影片。', '无法播放');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function undoHistory(historyId) {
+  if (!await avlib.confirm('撤销这次修改？会恢复到修改前的元数据。', '确认撤销')) return;
+  const response = await fetch('/api/titles/{{ title.id }}/history/' + historyId + '/undo', {
+    method: 'POST'
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) { await avlib.alert(data.error || '撤销失败', '撤销失败'); return; }
+  location.reload();
+}
+
+function unlockImport() {
+  const input = document.getElementById('meta-url');
+  const buttons = ['import-url-btn', 'import-fc2-btn']
+    .map(id => document.getElementById(id)).filter(Boolean);
+  input.disabled = false;
+  buttons.forEach(button => { button.disabled = false; });
+  document.getElementById('import-lock').hidden = true;
+  input.focus();
+  // 解锁后允许 Esc 重新锁定，避免一直敞开
+  input.onkeydown = (event) => {
+    if (event.key === 'Escape') { lockImport(); }
+  };
+}
+
+function lockImport() {
+  const input = document.getElementById('meta-url');
+  input.disabled = true;
+  input.value = '';
+  ['import-url-btn', 'import-fc2-btn'].forEach(id => {
+    const button = document.getElementById(id);
+    if (button) button.disabled = true;
+  });
+  const lock = document.getElementById('import-lock');
+  if (lock) lock.hidden = false;
+  const result = document.getElementById('import-result');
+  if (result) result.textContent = '';
+}
+
+async function importMetaUrl(useFc2) {
+  const result = document.getElementById('import-result');
+  const urlInput = document.getElementById('meta-url');
+  const payload = useFc2 ? { fc2: true } : { url: (urlInput.value || '').trim() };
+  if (!useFc2 && !payload.url) { result.textContent = '请先填官方页面 URL'; return; }
+  result.textContent = '抓取中…';
+  const response = await fetch('/api/titles/{{ title.id }}/import-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) { result.textContent = data.error || '导入失败'; return; }
+  result.textContent = '已导入，刷新中…';
+  location.reload();
+}
+
+async function uploadCover(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const form = new FormData();
+  form.append('file', file);
+  const r = await fetch('/api/titles/{{ title.id }}/cover', { method: 'POST', body: form });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { await avlib.alert(data.error || '上传失败', '上传失败'); input.value = ''; return; }
+  location.reload();
+}
+
+async function uploadStills(input) {
+  const files = Array.from(input.files || []);
+  if (!files.length) return;
+  const form = new FormData();
+  files.forEach(f => form.append('files', f));
+  const r = await fetch('/api/titles/{{ title.id }}/stills', { method: 'POST', body: form });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { await avlib.alert(data.error || '上传失败', '上传失败'); input.value = ''; return; }
+  location.reload();
+}
+</script>
+{% endblock %}

@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}LAMS{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>合集 / 母带</h1>
+  <p class="muted">
+    这里按你的文件夹结构聚合「未挂到番号 Title」的文件：顶层目录当作合集（例如
+    <code>蚊香社无码流出</code>），内部保留你原来的子目录/演员分类。
+    不建额外表，也不会改动文件归属。
+  </p>
+</section>
+
+<section class="panel">
+  <h2>合集列表 <span class="muted">（{{ collections|length }} 个）</span></h2>
+  {% if collections %}
+  <table class="data">
+    <tr><th>合集</th><th>文件数</th><th>大小</th><th>所在卷</th><th>样本</th><th></th></tr>
+    {% for c in collections %}
+    <tr>
+      <td><a href="{{ url_for('pages.collection_detail', name=c.name) }}">{{ c.name }}</a></td>
+      <td>{{ c.files }}</td>
+      <td class="nowrap">{{ c.total_bytes|filesizeformat }}</td>
+      <td>{{ c.volumes|join('、') }}</td>
+      <td class="muted" style="font-size:12px">
+        {% for sample in c.samples %}<div style="word-break:break-all">{{ sample }}</div>{% endfor %}
+      </td>
+      <td><a class="btn small" href="{{ url_for('pages.collection_detail', name=c.name) }}">打开</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <div class="empty">
+    <h2>还没有合集</h2>
+    <p class="muted">未挂 Title 的文件会按顶层文件夹自动聚合；先扫描 NAS/磁带。</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

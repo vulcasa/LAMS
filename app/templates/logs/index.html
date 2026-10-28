@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}LAMS{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>操作日志</h1>
+  <form method="get" class="form-row">
+    <select name="type" style="width:auto">
+      <option value="">类型：全部</option>
+      {% for t in types %}<option value="{{ t }}" {{ 'selected' if args.get('type') == t }}>{{ t }}</option>{% endfor %}
+    </select>
+    <select name="status" style="width:auto">
+      <option value="">状态：全部</option>
+      {% for s in ['success','failed','running','done','pending'] %}
+      <option value="{{ s }}" {{ 'selected' if args.get('status') == s }}>{{ s }}</option>
+      {% endfor %}
+    </select>
+    <button class="btn" type="submit">筛选</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>磁带操作</h2>
+  {% if ops %}
+  <table class="data">
+    <tr><th>#</th><th>时间</th><th>类型</th><th>状态</th><th>条码</th><th>消息</th><th>耗时</th><th>输出</th></tr>
+    {% for o in ops %}
+    <tr>
+      <td>{{ o.id }}</td>
+      <td class="nowrap">{{ o.started_at|bjtime }}</td>
+      <td>{{ o.op_type }}</td>
+      <td>{{ o.status }}</td>
+      <td>{{ o.barcode or '—' }}</td>
+      <td>{{ (o.message or '')[:60] }}</td>
+      <td class="nowrap">{{ (o.duration_ms ~ ' ms') if o.duration_ms is not none else '—' }}</td>
+      <td>
+        {% if o.stdout or o.stderr %}
+        <details><summary class="muted">查看</summary>
+          <pre class="jres">{{ (o.stdout or '')[:1200] }}{{ o.stderr or '' }}</pre>
+        </details>
+        {% else %}—{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="muted">暂无磁带操作记录。</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>SMB 操作</h2>
+  {% if smb_ops %}
+  <table class="data">
+    <tr><th>#</th><th>时间</th><th>动作</th><th>状态</th><th>主机/共享</th><th>挂载点</th><th>消息</th><th>耗时</th></tr>
+    {% for o in smb_ops %}
+    <tr>
+      <td>{{ o.id }}</td>
+      <td class="nowrap">{{ o.started_at|bjtime }}</td>
+      <td>{{ o.action }}</td>
+      <td>{% if o.status == 'success' %}<span class="badge nas">成功</span>{% else %}<span class="badge review">失败</span>{% endif %}</td>
+      <td>//{{ o.host }}/{{ o.share }}</td>
+      <td class="path">{{ o.mount_path or '—' }}</td>
+      <td>{{ (o.message or '')[:80] }}</td>
+      <td class="nowrap">{{ (o.duration_ms ~ ' ms') if o.duration_ms is not none else '—' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="muted">暂无 SMB 操作记录。</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>后台任务</h2>
+  <div id="jobs" class="jobs"><p class="muted">当前没有运行中的后台任务。</p></div>
+</section>
+
+<section class="panel">
+  <h2>任务记录</h2>
+  {% if jobs %}
+  <div class="task-record-scroll">
+    <table class="data task-record-table">
+      <thead><tr><th>#</th><th>类型</th><th>状态</th><th>进度</th><th>信息</th><th>创建</th><th>结束</th></tr></thead>
+      <tbody>
+      {% for j in jobs %}
+      <tr>
+        <td>{{ j.id }}</td>
+        <td>{{ j.kind }}</td>
+        <td>{{ j.status }}</td>
+        <td>{{ j.progress }}{% if j.total %} / {{ j.total }}{% endif %}</td>
+        <td class="muted">{{ (j.message or j.error or '')[:70] }}</td>
+        <td class="nowrap">{{ j.created_at|bjtime }}</td>
+        <td class="nowrap">{{ j.finished_at|bjtime if j.finished_at else '—' }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">暂无任务。</p>
+  {% endif %}
+</section>
+{% endblock %}

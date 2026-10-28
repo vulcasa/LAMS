@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+data/
+.pytest_cache/
+*.sqlite
+*.db
+.DS_Store
+
+dist/
+.docker-config/
+# 本地调试/截图产物
+.chrome-*/
+docs/*.png
+docs/*.webp
+*.log

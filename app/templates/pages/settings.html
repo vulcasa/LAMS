@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title %}LAMS{% endblock %}
+{% block content %}
+<div class="settings-page">
+<section class="panel">
+  <h2>代理</h2>
+  <div class="form-row proxy-row">
+    <label class="checkbox">
+      <input type="checkbox" id="proxy-enabled" {{ 'checked' if proxy.enabled }}> 启用代理
+    </label>
+    <input id="proxy-host" placeholder="地址，如 127.0.0.1 或 192.168.2.66" value="{{ proxy.host }}">
+    <input id="proxy-port" class="narrow" placeholder="端口 7897" value="{{ proxy.port }}">
+    <button class="btn primary" onclick="saveProxy(this)">保存</button>
+    <button class="btn" onclick="testProxy()">测试连通性</button>
+  </div>
+  <p class="muted" id="proxy-status">
+    当前生效：
+    {% if proxy.url %}<code>{{ proxy.url }}</code>（来源：{{ '设置页' if proxy.source == 'settings' else '环境变量' }}）
+    {% else %}未配置代理（直连）{% endif %}
+    {% if proxy.env_available and not proxy.enabled %}<br>环境变量里还有一个可用代理：<code>{{ proxy.env_url }}</code>，启用上面的开关后会优先用设置页的值。{% endif %}
+  </p>
+  <p class="muted">测试会通过代理请求一次 <code>https://www.google.com</code>，只要拿到响应（含 403）就说明链路通。</p>
+  <div id="proxy-result" class="muted"></div>
+</section>
+
+<section class="panel">
+  <h2>媒体库</h2>
+  <div class="form-row">
+    <label class="checkbox">
+      <input type="checkbox" id="auto-scan" {{ 'checked' if prefs.auto_scan_new_source }}> 新增介质后自动扫描
+    </label>
+    <label class="checkbox">
+      <input type="checkbox" id="auto-materialize" {{ 'checked' if prefs.auto_materialize_after_scan }}> 扫描完成后自动物化
+    </label>
+    <label class="checkbox">
+      <input type="checkbox" id="auto-refresh-sources" {{ 'checked' if prefs.auto_refresh_sources }}> 自动监测媒体库变动
+    </label>
+    <label class="muted">检测间隔（分钟）</label>
+    <input id="refresh-minutes" type="number" min="1" max="1440" value="{{ prefs.source_refresh_minutes }}" style="width:90px">
+    <label class="checkbox">
+      <input type="checkbox" id="smb-auto-refresh" {{ 'checked' if prefs.smb_auto_refresh }}> SMB 媒体库自动轮询（会唤醒硬盘）
+    </label>
+    <button class="btn primary" onclick="savePreferences(this)">保存</button>
+  </div>
+  <p class="muted">开启后，在「介质」页新增 NAS 挂载点会立即入队扫描；关闭则只登记，等手动点「扫描」。</p>
+</section>
+
+<section class="panel">
+  <h2>封面 / 剧照</h2>
+  <div class="settings-subgroup">
+    <div class="form-row">
+      <label class="checkbox">
+        <input type="checkbox" id="auto-assets" {{ 'checked' if prefs.auto_asset_poll }}> 自动轮询下载缺失封面/剧照
+      </label>
+      <button class="btn primary" onclick="savePreferences(this)">保存</button>
+    </div>
+    <p class="muted">
+      开启后后台会持续轮询：一批下载结束后自动接下一批；片库新增影片且缺封面/剧照时也会自动开始。
+      关闭则只保留刮削页的手动「下载缺失封面/剧照」按钮。
+    </p>
+  </div>
+  <div class="settings-subgroup">
+    <div class="form-row">
+      <span class="settings-heading">视频抽帧设置</span>
+      <label class="muted">每个视频文件的截图数量</label>
+      <input id="video-frames" type="number" min="1" max="60" value="{{ prefs.video_frame_count }}" style="width:90px">
+      <span class="muted">张/文件</span>
+      <label class="muted" for="video-width" style="margin-left:10px">分辨率</label>
+      <select id="video-width" style="width:auto">
+        <option value="0" {{ 'selected' if not prefs.video_frame_width }}>原始分辨率</option>
+        <option value="1920" {{ 'selected' if prefs.video_frame_width == 1920 }}>1920 宽</option>
+        <option value="1280" {{ 'selected' if prefs.video_frame_width == 1280 }}>1280 宽</option>
+      </select>
+      <button class="btn primary" onclick="savePreferences(this)">保存</button>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>运行信息（环境变量，改动需重启）</h2>
+  <table class="data">
+    {% for key, value in conf.items() %}
+    <tr><th style="width:180px">{{ key }}</th><td>{{ value if value is not none else '—' }}</td></tr>
+    {% endfor %}
+  </table>
+</section>
+
+<script>
+function flashSaved(button, message) {
+  if (!button) return;
+  let tip = button.nextElementSibling;
+  if (!tip || !tip.classList.contains('save-feedback')) {
+    tip = document.createElement('span');
+    tip.className = 'save-feedback';
+    button.insertAdjacentElement('afterend', tip);
+  }
+  tip.textContent = message;
+  tip.hidden = false;
+  clearTimeout(tip._timer);
+  tip._timer = setTimeout(() => { tip.hidden = true; tip.textContent = ''; }, 5000);
+}
+
+async function post(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+  return [r.ok, await r.json().catch(() => ({}))];
+}
+async function saveProxy(button) {
+  const payload = {
+    enabled: document.getElementById('proxy-enabled').checked,
+    host: document.getElementById('proxy-host').value.trim(),
+    port: document.getElementById('proxy-port').value.trim(),
+  };
+  try {
+    const [ok, data] = await post('/api/settings/proxy', payload);
+    if (ok && data.ok) {
+      flashSaved(button, '设置已保存');
+      document.getElementById('proxy-result').textContent =
+        '已保存：' + (data.proxy.url || '未启用') + '（刷新页面查看状态）';
+    } else {
+      flashSaved(button, '保存失败');
+      document.getElementById('proxy-result').textContent =
+        '保存失败：' + ((data.errors && data.errors.join('；')) || data.error || JSON.stringify(data));
+    }
+  } catch (e) {
+    flashSaved(button, '保存失败');
+  }
+}
+async function savePreferences(button) {
+  let ok = false, data = {};
+  try {
+    [ok, data] = await post('/api/settings/preferences', {
+    auto_scan_new_source: document.getElementById('auto-scan').checked,
+    auto_asset_poll: document.getElementById('auto-assets').checked,
+    auto_materialize_after_scan: document.getElementById('auto-materialize').checked,
+    video_frame_count: Number(document.getElementById('video-frames').value || 24),
+    video_frame_width: Number(document.getElementById('video-width').value || 0),
+    auto_refresh_sources: document.getElementById('auto-refresh-sources').checked,
+    source_refresh_minutes: Number(document.getElementById('refresh-minutes').value || 120),
+      smb_auto_refresh: document.getElementById('smb-auto-refresh').checked,
+    });
+  } catch (e) {
+    flashSaved(button, '保存失败');
+    return;
+  }
+  flashSaved(button, ok && data.ok ? '设置已保存' : '保存失败');
+}
+async function testProxy() {
+  document.getElementById('proxy-result').textContent = '测试中…';
+  const [ok, data] = await post('/api/settings/proxy/test', {});
+  if (ok && data.ok) {
+    document.getElementById('proxy-result').textContent =
+      `代理可用：${data.proxy} → ${data.target} 返回 ${data.status_code}，耗时 ${data.elapsed_ms}ms`;
+  } else {
+    document.getElementById('proxy-result').textContent =
+      '代理不可用：' + (data.error || JSON.stringify(data));
+  }
+}
+</script>
+{% endblock %}

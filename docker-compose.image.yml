@@ -1,0 +1,44 @@
+# 离线镜像模式（合并版）：不用在 Unraid 上构建，直接跑验证过的镜像。
+#
+# 在能构建的机器上：
+#   docker build --platform linux/amd64 \
+#     --build-arg BASE_IMAGE=docker.m.daocloud.io/library/python:3.12-slim-bookworm \
+#     --build-arg APT_MIRROR=mirrors.aliyun.com \
+#     --build-arg PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
+#     -t av-archive:amd64 .
+#   docker save av-archive:amd64 | gzip > av-archive-amd64-image.tar.gz
+#
+# 拷到 Unraid：
+#   docker load -i av-archive-amd64-image.tar.gz
+#   docker tag av-archive:amd64 av-archive:local
+#   docker compose -f docker-compose.image.yml up -d
+
+services:
+  av-archive:
+    image: av-archive:local
+    container_name: av-archive
+    restart: unless-stopped
+    privileged: true
+    ports:
+      - "5080:8000"
+    devices:
+      - /dev/sg10:/dev/sg10
+    volumes:
+      - ./data:/data
+      - /mnt/user/av:/mnt/av:ro
+    environment:
+      TZ: Asia/Shanghai
+      AVLIB_DATA_DIR: /data
+      AVLIB_NAS_ROOTS: /mnt/av
+      AVLIB_TAPE_ADAPTER: direct
+      LTFS_DEVICE: /dev/sg10
+      LTFS_MOUNT: /media/tape
+      AVLIB_BROWSE_ROOTS: /mnt,/data
+      AVLIB_WORKER: "1"
+      AVLIB_CODE_AUTO_MIN: "90"
+      # HTTPS_PROXY: http://192.168.2.66:7890
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3

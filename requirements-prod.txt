@@ -1,0 +1,9 @@
+flask==3.0.3
+flask-sqlalchemy==3.1.1
+SQLAlchemy==2.0.31
+python-dotenv==1.0.1
+requests==2.32.3
+beautifulsoup4==4.12.3
+lxml==5.2.2
+Pillow==10.4.0
+gunicorn==22.0.0

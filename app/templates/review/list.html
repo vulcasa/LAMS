@@ -1,0 +1,346 @@
+{% extends "base.html" %}
+{% block title %}LAMS{% endblock %}
+{% block content %}
+<section class="panel">
+  <h1>人工修正 / 待确认</h1>
+  <p class="muted">
+    自动物化没挂上 Title 的文件都在这里：低置信度、FC2 / 素人 / 无码番号、多番号合集、无法识别的文件名。
+    填目标番号后点「指派」会立即改文件（confidence=95）并尝试物化；dump 里没有的番号会保留待补元数据。
+  </p>
+  <div class="stats">
+    <div class="stat"><b>{{ summary.pending_files }}</b><span>待确认文件</span></div>
+    <div class="stat"><b>{{ summary.pending_groups }}</b><span>分组（番号/来源）</span></div>
+    <div class="stat"><b>{{ summary.low_confidence_files }}</b><span>低置信度（&lt; 自动阈值）</span></div>
+    <div class="stat"><b>{{ summary.auto_unmatched_files }}</b><span>自动未命中（如 FC2/素人）</span></div>
+    <div class="stat"><b>{{ summary.aliases }}</b><span>已学习别名</span></div>
+  </div>
+  <p class="muted" style="margin-top:12px">
+    多番号合集 / 想直接挂到已有番号：用 <code>POST /api/review/reassign</code>
+    <code>{"file_ids":[...],"target_code":"SSIS-001"}</code>，会写 CodeAlias 并挂到已有 Title。
+  </p>
+</section>
+
+<section class="panel">
+  <h2>待确认分组
+    <span class="muted">（第 {{ page }} / {{ pages }} 页，显示 {{ groups|length }} 组 / 共 {{ summary.pending_groups }} 组）</span>
+  </h2>
+  {% if groups %}
+  <table class="data">
+    <tr class="batch-row">
+      <td colspan="8">
+        <div class="batch-bar">
+          <label class="checkbox"><input type="checkbox" id="select-all"> 全选本页</label>
+          <span class="muted" id="batch-count">未选择</span>
+          <span class="muted" id="batch-result"></span>
+          <button class="btn small" type="button" id="batch-clear" hidden onclick="clearBatchState()">清除状态</button>
+        </div>
+      </td>
+      <td><button class="btn primary" type="button" id="batch-assign-btn" onclick="batchAssign()">批量指派</button></td>
+    </tr>
+    <tr>
+      <th style="width:3%"></th>
+      <th style="width:18%">原始键（code_guess）</th>
+      <th style="width:14%">来源分类</th>
+      <th style="width:7%">文件数</th>
+      <th style="width:9%">置信度</th>
+      <th style="width:16%">所在卷</th>
+      <th>样本路径</th>
+      <th style="width:16%">目标番号</th>
+      <th style="width:10%"></th>
+    </tr>
+    {% for g in groups %}
+    <tr data-raw-key="{{ g.code_guess or '' }}" data-file-ids="{{ g.file_ids|join(',') }}">
+      <td><input type="checkbox" class="row-select" onchange="updateBatchCount()"></td>
+      <td>
+        {% if g.code_guess %}
+          <code>{{ g.code_guess }}</code>
+        {% else %}
+          <span class="muted">（无番号 · {{ g.source_label or '其他' }}）</span>
+          {% if g.collection %}<div class="muted" style="font-size:11.5px">合集：<a href="{{ url_for('pages.collection_detail', name=g.collection) }}">{{ g.collection }}</a></div>{% endif %}
+          {% if g.folder %}<div class="muted" style="font-size:11.5px;word-break:break-all">{{ g.folder }}</div>{% endif %}
+        {% endif %}
+        {% if g.alias_code %}
+          <div class="muted" style="font-size:12px">已学别名 → {{ g.alias_code }}</div>
+        {% endif %}
+      </td>
+      <td>{% if g.source_label %}<span class="badge">{{ g.source_label }}</span>{% else %}—{% endif %}</td>
+      <td>{{ g.files }}</td>
+      <td class="nowrap">
+        {{ g.confidence_min }}{% if g.confidence_max != g.confidence_min %}–{{ g.confidence_max }}{% endif %}
+      </td>
+      <td>{{ g.volumes|join('、') }}</td>
+      <td>
+        {% for sample in g.samples %}
+          <div class="muted" style="font-family:ui-monospace,Menlo,monospace;font-size:12px;word-break:break-all">{{ sample }}</div>
+        {% endfor %}
+        {% if g.files > g.samples|length %}<div class="muted">…</div>{% endif %}
+      </td>
+      <td>
+        <input class="assign-code" value="{{ g.code_guess or '' }}" placeholder="如 SSIS-001" list="review-title-options" style="min-width:130px">
+      </td>
+      <td>
+        <button class="btn primary" onclick="reviewAssign(this)">指派</button>
+        <div class="assign-result muted" style="font-size:12px;margin-top:5px"></div>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  <div class="pager">
+    {% if page > 1 %}<a class="btn" href="{{ page_url(page - 1) }}">上一页</a>{% endif %}
+    {% for p in page_range %}
+      {% if p is none %}<span class="page-gap">…</span>
+      {% elif p == page %}<span class="btn page-num active">{{ p }}</span>
+      {% else %}<a class="btn page-num" href="{{ page_url(p) }}">{{ p }}</a>{% endif %}
+    {% endfor %}
+    {% if page < pages %}<a class="btn" href="{{ page_url(page + 1) }}">下一页</a>{% endif %}
+    <form class="page-jump" method="get" action="{{ url_for('review.page') }}">
+      {% for key, value in args.items() %}
+        {% if key not in ('page',) %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endif %}
+      {% endfor %}
+      <select name="page" aria-label="跳转页码">
+        {% for p in range(1, pages + 1) %}<option value="{{ p }}" {{ 'selected' if p == page }}>{{ p }}</option>{% endfor %}
+      </select>
+      <button class="btn" type="submit">Go</button>
+    </form>
+  </div>
+  <datalist id="review-title-options">
+    {% for code in title_options %}<option value="{{ code }}"></option>{% endfor %}
+  </datalist>
+  {% else %}
+  <div class="empty">
+    <h2>没有待确认文件</h2>
+    <p class="muted">扫描入库后，低置信度或未命中 dump 的文件会出现在这里。</p>
+  </div>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>已学习的别名（最近 30 条）</h2>
+  {% if aliases %}
+  <table class="data">
+    <tr><th>原始键</th><th>目标番号</th><th>创建时间</th></tr>
+    {% for alias in aliases %}
+    <tr>
+      <td><code>{{ alias.raw_key }}</code></td>
+      <td>{{ alias.code }}</td>
+      <td class="nowrap">{{ alias.created_at|bjtime if alias.created_at else '—' }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="muted">别名会在下次人工指派 / 合并时复用；自动扫描目前仍按文件名解析番号。</p>
+  {% else %}
+  <p class="muted">还没有人工修正记录。指派成功后会在这里出现「原始键 → 番号」的映射。</p>
+  {% endif %}
+</section>
+
+<script>
+document.addEventListener('change', function (event) {
+  if (!event.target || event.target.id !== 'select-all') return;
+  document.querySelectorAll('tr[data-raw-key] .row-select').forEach(function (box) {
+    box.checked = event.target.checked;
+  });
+  updateBatchCount();
+});
+
+function selectedRows() {
+  return Array.from(document.querySelectorAll('tr[data-raw-key]'))
+    .filter(row => row.querySelector('.row-select') && row.querySelector('.row-select').checked);
+}
+
+function updateBatchCount() {
+  const count = selectedRows().length;
+  document.getElementById('batch-count').textContent = count ? ('已选 ' + count + ' 组') : '未选择';
+}
+
+const BATCH_STATE_KEY = 'avlib.review.batch';
+
+function readBatchState() {
+  try {
+    const raw = localStorage.getItem(BATCH_STATE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+
+function saveBatchState(state) {
+  try { localStorage.setItem(BATCH_STATE_KEY, JSON.stringify(state)); } catch (e) { /* ignore */ }
+}
+
+function clearBatchState() {
+  try { localStorage.removeItem(BATCH_STATE_KEY); } catch (e) { /* ignore */ }
+  const out = document.getElementById('batch-result');
+  if (out) out.textContent = '';
+  const clear = document.getElementById('batch-clear');
+  if (clear) clear.hidden = true;
+}
+
+function setBatchBusy(busy) {
+  const button = document.getElementById('batch-assign-btn');
+  if (button) button.disabled = busy;
+  const clear = document.getElementById('batch-clear');
+  if (clear) clear.hidden = !busy;
+}
+
+function showBatchResult(result, missing) {
+  const out = document.getElementById('batch-result');
+  let text = '成功 ' + (result.updated || 0) + ' 组';
+  if (missing && missing.length) text += '，跳过未填番号 ' + missing.length + ' 组';
+  if (result.errors && result.errors.length) text += '，失败 ' + result.errors.length + ' 组：' + result.errors[0];
+  if (result.materialize_job_id) text += '；已入队物化 #' + result.materialize_job_id;
+  out.textContent = text;
+  setBatchBusy(false);
+  const clear = document.getElementById('batch-clear');
+  if (clear) clear.hidden = false;
+}
+
+function showBatchFailure(message) {
+  const out = document.getElementById('batch-result');
+  out.textContent = '批量指派失败：' + (message || '未知错误');
+  setBatchBusy(false);
+  const clear = document.getElementById('batch-clear');
+  if (clear) clear.hidden = false;
+}
+
+async function batchAssign() {
+  const rows = selectedRows();
+  const out = document.getElementById('batch-result');
+  if (!rows.length) { out.textContent = '请先勾选要处理的组'; return; }
+  const items = [];
+  const missing = [];
+  rows.forEach(row => {
+    const code = (row.querySelector('input.assign-code').value || '').trim();
+    if (!code) { missing.push(row.dataset.rawKey || '无番号组'); return; }
+    const ids = (row.dataset.fileIds || '').split(',').filter(Boolean).map(Number);
+    items.push({ raw_key: row.dataset.rawKey || '', code: code, file_ids: ids });
+  });
+  if (!items.length) { out.textContent = '选中的组都没有填写目标番号'; return; }
+  setBatchBusy(true);
+  const clear = document.getElementById('batch-clear');
+  if (clear) clear.hidden = true;
+  out.textContent = '提交中…（' + items.length + ' 组）';
+  try {
+    const response = await fetch('/api/review/batch-assign', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: items }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      showBatchFailure(data.error || '提交失败');
+      return;
+    }
+    const state = { job_id: data.job_id, missing: missing, phase: 'queued' };
+    saveBatchState(state);
+    out.textContent = '已入队后台批量指派 #' + data.job_id + '，处理中…';
+    pollBatchJob(data.job_id, missing);
+  } catch (err) {
+    showBatchFailure(err.message);
+  }
+}
+
+async function pollBatchJob(jobId, missing) {
+  const out = document.getElementById('batch-result');
+  try {
+    const response = await fetch('/api/jobs?limit=100');
+    const data = await response.json().catch(() => ({}));
+    const job = (data.jobs || []).find(j => j.id === jobId);
+    if (!job) {
+      out.textContent = '等待后台任务 #' + jobId + ' 启动…（刷新页面后会继续）';
+      saveBatchState({ job_id: jobId, missing: missing, phase: 'queued' });
+      setTimeout(() => pollBatchJob(jobId, missing), 1500);
+      return;
+    }
+    if (job.status === 'pending' || job.status === 'running') {
+      out.textContent = '后台处理中… ' + (job.total ? job.progress + '/' + job.total : (job.progress || 0))
+        + '（任务 #' + jobId + '，刷新页面后会继续）';
+      saveBatchState({ job_id: jobId, missing: missing, phase: 'running' });
+      setTimeout(() => pollBatchJob(jobId, missing), 1200);
+      return;
+    }
+    if (job.status === 'failed') {
+      saveBatchState({ job_id: jobId, missing: missing, phase: 'failed', error: job.error || '未知错误' });
+      showBatchFailure(job.error || '未知错误');
+      return;
+    }
+    const result = job.result || {};
+    saveBatchState({
+      job_id: jobId, missing: missing, phase: 'done',
+      updated: result.updated || 0, errors: result.errors || [],
+      materialize_job_id: result.materialize_job_id || null,
+    });
+    showBatchResult(result, missing);
+    // 完成后刷新，让分组/统计更新；刷新后仍会显示上面的完成结果
+    setTimeout(() => location.reload(), 1600);
+  } catch (err) {
+    setTimeout(() => pollBatchJob(jobId, missing), 1500);
+  }
+}
+
+function restoreBatchState() {
+  const state = readBatchState();
+  if (!state) return;
+  const out = document.getElementById('batch-result');
+  if (state.phase === 'done') {
+    showBatchResult(state, state.missing || []);
+    return;
+  }
+  if (state.phase === 'failed') {
+    showBatchFailure(state.error);
+    return;
+  }
+  setBatchBusy(true);
+  out.textContent = '恢复批量指派任务 #' + state.job_id + '，处理中…';
+  pollBatchJob(state.job_id, state.missing || []);
+}
+
+restoreBatchState();
+
+async function reviewAssign(button) {
+  var row = button.closest('tr');
+  var input = row.querySelector('input.assign-code');
+  var out = row.querySelector('.assign-result');
+  var code = (input.value || '').trim();
+  if (!code) {
+    input.focus();
+    out.textContent = '请先填目标番号';
+    return;
+  }
+  var rawKey = row.dataset.rawKey || '';
+  var ids = (row.dataset.fileIds || '').split(',').filter(Boolean).map(Number);
+  var payload = { code: code };
+  if (rawKey) { payload.raw_key = rawKey; }
+  else { payload.file_ids = ids; }
+
+  button.disabled = true;
+  var old = button.textContent;
+  button.textContent = '提交中…';
+  out.textContent = '';
+  try {
+    var resp = await fetch('/api/review/assign', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    var data = {};
+    try { data = await resp.json(); } catch (e) { /* ignore */ }
+    if (!resp.ok) { throw new Error(data.error || ('HTTP ' + resp.status)); }
+    var parts = ['已更新 ' + data.files_updated + ' 个文件'];
+    if (data.title_id) {
+      parts.push('挂到 Title #' + data.title_id);
+    } else if (data.materialize && data.materialize.matched) {
+      parts.push('物化命中但无 Title？');
+    } else {
+      parts.push('dump 未命中，Title 未建');
+    }
+    out.textContent = parts.join('，');
+    if (data.files_updated > 0 || data.title_id) {
+      setTimeout(function () { window.location.reload(); }, 900);
+    }
+  } catch (err) {
+    out.textContent = '失败：' + err.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = old;
+  }
+}
+</script>
+{% endblock %}

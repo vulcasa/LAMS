@@ -1,0 +1,59 @@
+# 合并版（LTFS 内置）：一个容器同时管理磁带 + 片库。
+#
+# 首次部署：
+#   mkdir -p data
+#   docker compose up -d --build
+#   浏览器打开 http://<unraid-ip>:5080
+#
+# 国内网络构建可先 export：
+#   AVLIB_BASE_IMAGE=docker.m.daocloud.io/library/python:3.12-slim-bookworm
+#   AVLIB_APT_MIRROR=mirrors.aliyun.com
+#   AVLIB_PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+
+services:
+  av-archive:
+    build:
+      context: .
+      args:
+        BASE_IMAGE: ${AVLIB_BASE_IMAGE:-python:3.12-slim-bookworm}
+        APT_MIRROR: ${AVLIB_APT_MIRROR:-deb.debian.org}
+        PIP_INDEX_URL: ${AVLIB_PIP_INDEX_URL:-https://pypi.org/simple/}
+    image: av-archive:local
+    container_name: av-archive
+    restart: unless-stopped
+    # LTFS 需要 FUSE + SCSI 设备；v1 同样要求 privileged
+    privileged: true
+    ports:
+      - "5080:8000"
+    # 磁带设备号用 `ltfs -o device_list` 或 `lsscsi -g` 确认；重启后可能漂移
+    devices:
+      - /dev/sg10:/dev/sg10
+    volumes:
+      # 主数据：SQLite + 封面/剧照/备份。请纳入 Unraid 备份。
+      - ./data:/data
+      # NAS 片库（只读：容器→磁带方向够用）
+      - /mnt/user/av:/mnt/av:ro
+      # 磁带→容器 恢复时写到 /data（可写）；需要直接写回 NAS 时把上面改成 :rw
+      # 注意：不要再把宿主目录绑到 /media/tape，LTFS 在容器内自己挂载
+    environment:
+      TZ: Asia/Shanghai
+      AVLIB_DATA_DIR: /data
+      AVLIB_NAS_ROOTS: /mnt/av
+      # 合并后默认直连设备；过渡期想回退 v1 可改成 http 并配 LTFS_API_BASE
+      AVLIB_TAPE_ADAPTER: direct
+      LTFS_DEVICE: /dev/sg10
+      LTFS_MOUNT: /media/tape
+      # 文件浏览器允许访问的容器内根目录（逗号分隔）
+      AVLIB_BROWSE_ROOTS: /mnt,/data
+      AVLIB_WORKER: "1"
+      AVLIB_CODE_AUTO_MIN: "90"
+      # 刮削需要外网。Unraid 上如果有代理，填这里（不要写进代码仓库）
+      # HTTPS_PROXY: http://192.168.2.66:7890
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+    # 和其它容器（如 Prowlarr 之类）共用网络时再取消注释
+    # networks:
+    #   - proxy

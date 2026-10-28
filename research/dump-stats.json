@@ -1,0 +1,496 @@
+{
+  "generated_at": "2026-10-26T03:31:53+00:00",
+  "meta": {
+    "schema_version": "1",
+    "importer_version": "1.0.0",
+    "user_version": "1",
+    "dump_file": "latest.sql",
+    "dump_path": "/tmp/r18dump/latest.sql",
+    "dump_size_bytes": "1388248099",
+    "dump_mtime": "2026-10-26T03:15:32+00:00",
+    "dump_date": "2026-10-26",
+    "dump_sha256": "65903a48a0c18a579be2559daefb22038bca7ccfa4895b8b806dcfdd20d742a2",
+    "imported_at": "2026-10-26T03:30:57+00:00",
+    "duration_s": "55.118",
+    "imported_rows": "16467908",
+    "total_rows": "18860058",
+    "db_bytes": "1873670144",
+    "batch_size": "10000",
+    "indexes_built": "1",
+    "index_duration_s": "16.327",
+    "analyze_duration_s": "0.0",
+    "rows:derived_actor": "105833",
+    "seconds:derived_actor": "0.193",
+    "imported:derived_actor": "1",
+    "rows:derived_actress": "102022",
+    "seconds:derived_actress": "0.207",
+    "imported:derived_actress": "1",
+    "rows:derived_author": "8189",
+    "seconds:derived_author": "0.014",
+    "imported:derived_author": "1",
+    "rows:derived_category": "989",
+    "seconds:derived_category": "0.002",
+    "imported:derived_category": "1",
+    "rows:derived_director": "27973",
+    "seconds:derived_director": "0.053",
+    "imported:derived_director": "1",
+    "rows:derived_label": "13141",
+    "seconds:derived_label": "0.021",
+    "imported:derived_label": "1",
+    "rows:derived_maker": "6874",
+    "seconds:derived_maker": "0.011",
+    "imported:derived_maker": "1",
+    "rows:derived_series": "102250",
+    "seconds:derived_series": "0.188",
+    "imported:derived_series": "1",
+    "rows:derived_site": "2",
+    "seconds:derived_site": "0.0",
+    "imported:derived_site": "1",
+    "rows:derived_video": "1914173",
+    "seconds:derived_video": "13.752",
+    "imported:derived_video": "1",
+    "rows:derived_video_actor": "1173047",
+    "seconds:derived_video_actor": "1.996",
+    "imported:derived_video_actor": "1",
+    "rows:derived_video_actress": "2494132",
+    "seconds:derived_video_actress": "4.454",
+    "imported:derived_video_actress": "1",
+    "rows:derived_video_author": "148443",
+    "seconds:derived_video_author": "0.199",
+    "imported:derived_video_author": "1",
+    "rows:derived_video_category": "9551843",
+    "seconds:derived_video_category": "14.843",
+    "imported:derived_video_category": "1",
+    "rows:derived_video_director": "818997",
+    "seconds:derived_video_director": "1.097",
+    "imported:derived_video_director": "1",
+    "rows:machine_translation": "560622",
+    "seconds:machine_translation": "0.236",
+    "imported:machine_translation": "0",
+    "rows:source_dmm_histrion": "3554",
+    "seconds:source_dmm_histrion": "0.001",
+    "imported:source_dmm_histrion": "0",
+    "rows:source_dmm_trailer": "1813878",
+    "seconds:source_dmm_trailer": "0.521",
+    "imported:source_dmm_trailer": "0",
+    "rows:source_dmm_video_histrion": "14096",
+    "seconds:source_dmm_video_histrion": "0.004",
+    "imported:source_dmm_video_histrion": "0"
+  },
+  "tables": {
+    "derived_actor": {
+      "rows": 105833,
+      "seconds": 0.193,
+      "imported": true
+    },
+    "derived_actress": {
+      "rows": 102022,
+      "seconds": 0.207,
+      "imported": true
+    },
+    "derived_author": {
+      "rows": 8189,
+      "seconds": 0.014,
+      "imported": true
+    },
+    "derived_category": {
+      "rows": 989,
+      "seconds": 0.002,
+      "imported": true
+    },
+    "derived_director": {
+      "rows": 27973,
+      "seconds": 0.053,
+      "imported": true
+    },
+    "derived_label": {
+      "rows": 13141,
+      "seconds": 0.021,
+      "imported": true
+    },
+    "derived_maker": {
+      "rows": 6874,
+      "seconds": 0.011,
+      "imported": true
+    },
+    "derived_series": {
+      "rows": 102250,
+      "seconds": 0.188,
+      "imported": true
+    },
+    "derived_site": {
+      "rows": 2,
+      "seconds": 0.0,
+      "imported": true
+    },
+    "derived_video": {
+      "rows": 1914173,
+      "seconds": 13.752,
+      "imported": true
+    },
+    "derived_video_actor": {
+      "rows": 1173047,
+      "seconds": 1.996,
+      "imported": true
+    },
+    "derived_video_actress": {
+      "rows": 2494132,
+      "seconds": 4.454,
+      "imported": true
+    },
+    "derived_video_author": {
+      "rows": 148443,
+      "seconds": 0.199,
+      "imported": true
+    },
+    "derived_video_category": {
+      "rows": 9551843,
+      "seconds": 14.843,
+      "imported": true
+    },
+    "derived_video_director": {
+      "rows": 818997,
+      "seconds": 1.097,
+      "imported": true
+    }
+  },
+  "video": {
+    "rows": 1914173,
+    "dvd_id_null": 386959,
+    "dvd_id_empty": 1162,
+    "dvd_id_usable": 1526052,
+    "dvd_id_usable_ratio": 0.7972,
+    "dvd_id_key_distinct": 1170727,
+    "dvd_id_key_duplicated": 273922,
+    "dvd_id_padding_collisions": 5338,
+    "dvd_id_rows_padding_collisions": 16368,
+    "dvd_id_norm_distinct": 1165312,
+    "dvd_id_norm_duplicated": 275543,
+    "content_id_null": 0,
+    "title_en_nonempty": 431058,
+    "title_en_nonempty_ratio": 0.2252,
+    "title_ja_nonempty": 1873835,
+    "title_ja_nonempty_ratio": 0.9789,
+    "comment_en_nonempty": 21409,
+    "comment_en_nonempty_ratio": 0.0112,
+    "comment_ja_nonempty": 0,
+    "comment_ja_nonempty_ratio": 0.0,
+    "sample_url_nonempty": 418930,
+    "sample_url_nonempty_ratio": 0.2189,
+    "jacket_full_url_nonempty": 1909700,
+    "jacket_full_url_nonempty_ratio": 0.9977,
+    "jacket_thumb_url_nonempty": 1909700,
+    "jacket_thumb_url_nonempty_ratio": 0.9977,
+    "gallery_full_first_nonempty": 1111906,
+    "gallery_full_first_nonempty_ratio": 0.5809,
+    "gallery_thumb_first_nonempty": 1111906,
+    "gallery_thumb_first_nonempty_ratio": 0.5809,
+    "title_ja_and_en_nonempty": 390720,
+    "title_ja_or_en_nonempty": 1914173,
+    "runtime_mins_notnull": 1833509,
+    "release_date_notnull": 1914140,
+    "release_date_min": "1968-05-01",
+    "release_date_max": "2030-12-31",
+    "site_distribution": [
+      {
+        "site_id": 2,
+        "count": 1591376
+      },
+      {
+        "site_id": 1,
+        "count": 322797
+      }
+    ],
+    "service_code_distribution": [
+      {
+        "service_code": "mono",
+        "count": 849919
+      },
+      {
+        "service_code": "digital",
+        "count": 643738
+      },
+      {
+        "service_code": "rental",
+        "count": 308955
+      },
+      {
+        "service_code": "ebook",
+        "count": 111561
+      }
+    ]
+  },
+  "actress": {
+    "rows": 102022,
+    "name_kanji_nonempty": 66233,
+    "name_kanji_nonempty_ratio": 0.6492,
+    "name_kana_nonempty": 65774,
+    "name_kana_nonempty_ratio": 0.6447,
+    "name_romaji_nonempty": 82661,
+    "name_romaji_nonempty_ratio": 0.8102,
+    "image_url_nonempty": 39582,
+    "image_url_nonempty_ratio": 0.388,
+    "all_names_empty": 0,
+    "kanji_and_kana_nonempty": 65774,
+    "kanji_only": 459
+  },
+  "category": {
+    "rows": 989,
+    "name_ja_nonempty": 970,
+    "name_ja_nonempty_ratio": 0.9808,
+    "name_en_nonempty": 471,
+    "name_en_nonempty_ratio": 0.4762
+  },
+  "maker": {
+    "rows": 6874,
+    "name_ja_nonempty": 6850,
+    "name_ja_nonempty_ratio": 0.9965,
+    "name_en_nonempty": 4883,
+    "name_en_nonempty_ratio": 0.7104
+  },
+  "label": {
+    "rows": 13141,
+    "name_ja_nonempty": 12789,
+    "name_ja_nonempty_ratio": 0.9732,
+    "name_en_nonempty": 9327,
+    "name_en_nonempty_ratio": 0.7098
+  },
+  "series": {
+    "rows": 102250,
+    "name_ja_nonempty": 101003,
+    "name_ja_nonempty_ratio": 0.9878,
+    "name_en_nonempty": 38798,
+    "name_en_nonempty_ratio": 0.3794
+  },
+  "director": {
+    "rows": 27973,
+    "name_kanji_nonempty": 27973,
+    "name_kanji_nonempty_ratio": 1.0,
+    "name_kana_nonempty": 27973,
+    "name_kana_nonempty_ratio": 1.0,
+    "name_romaji_nonempty": 4594,
+    "name_romaji_nonempty_ratio": 0.1642
+  },
+  "gallery": {
+    "full_first_nonnull": 1111906,
+    "full_last_nonnull": 1111906,
+    "thumb_first_nonnull": 1111906,
+    "full_first_null": 802267,
+    "count_distribution": {
+      "0": 12768,
+      "1-5": 83864,
+      "6-10": 219607,
+      "11-15": 117854,
+      "16-20": 592053,
+      "21+": 85760
+    },
+    "count_histogram": {
+      "0": 12768,
+      "1": 777,
+      "2": 888,
+      "3": 1725,
+      "4": 3036,
+      "5": 77438,
+      "6": 10307,
+      "7": 2969,
+      "8": 17610,
+      "9": 7362,
+      "10": 181359,
+      "11": 11240,
+      "12": 50127,
+      "13": 8853,
+      "14": 9788,
+      "15": 37846,
+      "16": 13539,
+      "17": 9799,
+      "18": 11105,
+      "19": 12588,
+      "20": 545022,
+      "21": 9,
+      "22": 4,
+      "24": 1,
+      "25": 3,
+      "26": 1,
+      "28": 1,
+      "30": 15,
+      "33": 1,
+      "35": 3,
+      "37": 1,
+      "38": 2,
+      "39": 3,
+      "40": 83668,
+      "41": 1128,
+      "42": 813,
+      "44": 66,
+      "45": 26,
+      "46": 10,
+      "47": 5
+    },
+    "unparsable_pairs": 0,
+    "samples": [
+      {
+        "first": "digital/video/100tv00031/100tv00031jp-1",
+        "last": "digital/video/100tv00031/100tv00031jp-5",
+        "thumb_first": "digital/video/100tv00031/100tv00031-1",
+        "thumb_last": "digital/video/100tv00031/100tv00031-5",
+        "count": 5
+      },
+      {
+        "first": "digital/video/100tv00032/100tv00032jp-1",
+        "last": "digital/video/100tv00032/100tv00032jp-8",
+        "thumb_first": "digital/video/100tv00032/100tv00032-1",
+        "thumb_last": "digital/video/100tv00032/100tv00032-8",
+        "count": 8
+      },
+      {
+        "first": "digital/video/100tv00059/100tv00059-1",
+        "last": "digital/video/100tv00059/100tv00059-0",
+        "thumb_first": "digital/video/100tv00059/100tv00059-1",
+        "thumb_last": "digital/video/100tv00059/100tv00059-0",
+        "count": 0
+      },
+      {
+        "first": "digital/video/100tv00060/100tv00060-1",
+        "last": "digital/video/100tv00060/100tv00060-0",
+        "thumb_first": "digital/video/100tv00060/100tv00060-1",
+        "thumb_last": "digital/video/100tv00060/100tv00060-0",
+        "count": 0
+      },
+      {
+        "first": "digital/video/100tv00095/100tv00095jp-1",
+        "last": "digital/video/100tv00095/100tv00095jp-5",
+        "thumb_first": "digital/video/100tv00095/100tv00095-1",
+        "thumb_last": "digital/video/100tv00095/100tv00095-5",
+        "count": 5
+      }
+    ]
+  },
+  "dvd_id_prefixes": [
+    {
+      "prefix": "(other)",
+      "count": 116966
+    },
+    {
+      "prefix": "PCBE",
+      "count": 5522
+    },
+    {
+      "prefix": "VNDS",
+      "count": 5138
+    },
+    {
+      "prefix": "DSE",
+      "count": 5019
+    },
+    {
+      "prefix": "SPRD",
+      "count": 4757
+    },
+    {
+      "prefix": "KBKD",
+      "count": 4741
+    },
+    {
+      "prefix": "GNBF",
+      "count": 4401
+    },
+    {
+      "prefix": "PCBP",
+      "count": 4164
+    },
+    {
+      "prefix": "BCBA",
+      "count": 4084
+    },
+    {
+      "prefix": "HODV",
+      "count": 4021
+    },
+    {
+      "prefix": "NACR",
+      "count": 3929
+    },
+    {
+      "prefix": "KIBF",
+      "count": 3874
+    },
+    {
+      "prefix": "TCED",
+      "count": 3872
+    },
+    {
+      "prefix": "TDV",
+      "count": 3760
+    },
+    {
+      "prefix": "DSTD",
+      "count": 3742
+    },
+    {
+      "prefix": "ABP",
+      "count": 3729
+    },
+    {
+      "prefix": "ARM",
+      "count": 3522
+    },
+    {
+      "prefix": "SPZ",
+      "count": 3356
+    },
+    {
+      "prefix": "GS",
+      "count": 3354
+    },
+    {
+      "prefix": "NHDTB",
+      "count": 3125
+    },
+    {
+      "prefix": "MXGS",
+      "count": 3053
+    },
+    {
+      "prefix": "GVG",
+      "count": 2997
+    },
+    {
+      "prefix": "XRW",
+      "count": 2961
+    },
+    {
+      "prefix": "JRZD",
+      "count": 2874
+    },
+    {
+      "prefix": "VENU",
+      "count": 2804
+    },
+    {
+      "prefix": "C",
+      "count": 2758
+    },
+    {
+      "prefix": "CESD",
+      "count": 2724
+    },
+    {
+      "prefix": "RD",
+      "count": 2653
+    },
+    {
+      "prefix": "STARS",
+      "count": 2598
+    },
+    {
+      "prefix": "PCBG",
+      "count": 2579
+    }
+  ],
+  "chinese": {
+    "english_fields_scanned": 200000,
+    "cjk_in_english_fields": 1
+  },
+  "dvd_id_no_dash": 313154,
+  "db_path": "data/r18dump.db"
+}

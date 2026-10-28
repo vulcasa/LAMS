@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}LAMS{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  <script>
+  (function () {
+    var nativeFetch = window.fetch;
+    function csrfToken() {
+      var match = document.cookie.match(/(?:^|; )csrf_token=([^;]+)/);
+      return match ? decodeURIComponent(match[1]) : '';
+    }
+    window.fetch = function (input, init) {
+      init = init || {};
+      var method = (init.method || 'GET').toUpperCase();
+      if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+        var headers = new Headers(init.headers || {});
+        var token = csrfToken();
+        if (token) headers.set('X-CSRF-Token', token);
+        init.headers = headers;
+      }
+      return nativeFetch.call(this, input, init);
+    };
+  })();
+  </script>
+  {% block extra_css %}{% endblock %}
+  <script src="{{ url_for('static', filename='js/jobs.js') }}" defer></script>
+</head>
+<body class="{{ 'mobile' if is_mobile else '' }}">
+<header class="topbar">
+  <a class="brand" href="{{ url_for('library.index') }}">
+    <span class="brand-name">LAMS</span>
+    <span class="brand-sub">Local AV Management System</span>
+  </a>
+  <nav class="nav">
+    <a class="{{ 'active' if request.endpoint in ('library.index', 'library.detail') }}" href="{{ url_for('library.index') }}">片库</a>
+    <a class="{{ 'active' if request.endpoint in ('pages.player', 'pages.client_player') }}" href="{{ url_for('pages.client_player') }}">正在播放</a>
+    {% if not is_mobile %}
+    <a class="{{ 'active' if request.endpoint == 'tape.index' }}" href="{{ url_for('tape.index') }}">磁带</a>
+    <a class="{{ 'active' if request.endpoint == 'files.index' }}" href="{{ url_for('files.index') }}">文件</a>
+    <a class="{{ 'active' if request.endpoint == 'pages.sources' }}" href="{{ url_for('pages.sources') }}">介质</a>
+    <a class="{{ 'active' if request.endpoint == 'review.page' }}" href="{{ url_for('review.page') }}">待确认</a>
+    <a class="{{ 'active' if request.endpoint == 'pages.scrape' }}" href="{{ url_for('pages.scrape') }}">刮削</a>
+    <a class="{{ 'active' if request.endpoint == 'pages.activity' }}" href="{{ url_for('pages.activity') }}">活动</a>
+    <a class="{{ 'active' if request.endpoint == 'logs.index' }}" href="{{ url_for('logs.index') }}">日志</a>
+    <a class="{{ 'active' if request.endpoint == 'backup.index' }}" href="{{ url_for('backup.index') }}">备份</a>
+    <a class="{{ 'active' if request.endpoint == 'pages.settings' }}" href="{{ url_for('pages.settings') }}">设置</a>
+    {% endif %}
+  </nav>
+</header>
+<main class="wrap">
+  {% block content %}{% endblock %}
+</main>
+<footer class="foot">
+  LAMS · Local AV Management System · 数据仅存本机
+</footer>
+{% block scripts %}{% endblock %}
+</body>
+</html>
