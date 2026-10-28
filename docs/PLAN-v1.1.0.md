@@ -6,11 +6,13 @@
 > 主题：
 > 1. 视频抽帧任务并行化
 > 2. 容器 GPU 直通 + 服务端硬件转码 + HLS/fMP4 自适应播放
+> 3. FC2PPV 元数据、封面与剧照获取
 
-v1.1.0 计划包含两项更新：
+v1.1.0 计划包含三项更新：
 
 1. **抽帧并行化**（第 1–10 节）
-2. **GPU 硬件转码与远程自适应播放**（第 11 节，本次新增）
+2. **GPU 硬件转码与远程自适应播放**（第 11 节）
+3. **FC2PPV 元数据与封面/剧照获取**（第 12 节，本次新增）
 
 ---
 
@@ -480,3 +482,284 @@ v1.1.0 第二项采用：
 ```
 
 这样既保留现有零转码体验，又在远程场景显著降低带宽。
+
+
+---
+
+## 12. 功能三：FC2PPV 元数据、封面与剧照获取
+
+> 状态：规划中，先不落地
+> 目标：补齐 FC2PPV 作品的标题、日期、seller、tags、时长、封面和 sample 剧照，不再依赖 r18.dev dump。
+
+### 12.1 背景与现状
+
+FC2PPV 与常规商业番号不同：
+
+- 没有统一的 r18.dev / DMM 底座；
+- 每个作品只有自己的商品页；
+- 大量作品会下架、私有化或改 URL；
+- 演员/导演信息通常缺失，seller 和 tags 更重要。
+
+当前项目已有基础：
+
+```text
+code_parser.py   已支持 FC2-PPV-1234567 / FC2PPV1234567 / FC2-1234567
+url_meta.py      已有 fc2_article_url()，能拼官方 article URL
+url_meta.py      已能解析 OpenGraph / JSON-LD 的标题、封面、日期、简介
+```
+
+目前缺口：
+
+- 只能拿到单张封面，不能稳定获取 sample 剧照；
+- seller、tags、时长等字段没有解析；
+- 没有独立 FC2 抓取任务和失败兜底；
+- 没有 FC2 批量抓取限速/缓存策略。
+
+### 12.2 数据源优先级
+
+| 优先级 | 来源 | 用途 |
+|---|---|---|
+| 1 | FC2 官方作品页 | 标题、封面、sample 剧照、日期、seller、tags、简介 |
+| 2 | FC2 官方 API / 联盟 API | 结构化元数据（如可申请） |
+| 3 | FC2 seller 页面 | 商品页失效时兜底 |
+| 4 | 第三方 FC2 数据库（如 fc2ppvdb） | 元数据/封面/剧照 fallback，需确认条款 |
+| 5 | JavDB | 少量 FC2 条目，覆盖有限 |
+| 6 | 本地 NFO / sidecar / 手工 URL | 最终兜底 |
+
+**不依赖 r18.dev dump**：FC2 在 dump 中基本为 0。
+
+### 12.3 官方页解析内容
+
+官方作品页：
+
+```text
+https://adult.contents.fc2.com/article/<id>/
+```
+
+解析优先级：
+
+```text
+JSON-LD
+→ 页面内嵌 JSON
+→ OpenGraph（og:title / og:image / og:description）
+→ HTML 结构兜底
+```
+
+可获取字段：
+
+- 标题（需清理营销词）；
+- 封面；
+- sample 剧照列表；
+- 发售日期；
+- seller / 作者；
+- tags / 题材；
+- 时长（页面有则取）；
+- 简介；
+- 官方 URL。
+
+### 12.4 字段映射
+
+```text
+Title.dvd_id       = FC2-PPV-1234567
+Title.content_id   = 1234567
+Title.title_ja     = 页面标题（清理后）
+Title.release_date = 发售日期
+Title.runtime_mins = 时长（如有）
+Title.maker        = seller / 作者
+Title.genre        = tags
+Title.cover_local  = covers/FC2-PPV-1234567.jpg
+Title.source_url   = 官方作品页
+```
+
+FC2 通常没有传统演员/导演：
+
+- 演员留空，进入人工补录；
+- seller 可作为 maker 或单独字段；
+- tags 进题材；
+- 简介进描述/备注。
+
+### 12.5 封面与剧照
+
+#### 封面
+
+```text
+og:image 或主商品图
+→ 下载 media/covers/FC2-PPV-<id>.jpg
+→ 校验 Content-Type / 尺寸
+→ 生成缩略图
+```
+
+#### 剧照
+
+```text
+sample gallery
+→ 提取全部 sample image URL
+→ 处理缩略图/原图规则
+→ 下载 media/stills/FC2-PPV-<id>/01.jpg ...
+→ 写 Asset(kind='still', idx=...)
+```
+
+规则：
+
+- 去重；
+- 最多限制 20 张；
+- 跳过占位图/水印图；
+- 单张失败不阻塞其他剧照；
+- 剧照与视频抽帧分目录、分 Asset kind；
+- 不公开再分发图片。
+
+### 12.6 技术架构
+
+建议新增独立 provider：
+
+```text
+services/metadata/
+  provider.py       # 统一 provider 接口
+  fc2.py            # 官方作品页
+  fc2db.py          # 第三方 FC2 数据库 fallback
+```
+
+统一接口：
+
+```python
+fetch(code) -> {
+    ok, title, cover_url, still_urls, date,
+    seller, tags, runtime, source_url
+}
+```
+
+抓取任务：
+
+```text
+fc2/fetch
+fc2/fetch_batch
+```
+
+流程：
+
+```text
+扫描到 FC2 文件
+→ 解析出 FC2-PPV-<id>
+→ 入队抓取
+→ 写 Title
+→ 下载封面/剧照
+→ 生成缩略图/Asset
+→ 成功/失败记录
+```
+
+### 12.7 限速、缓存与失败兜底
+
+- 单 IP 限速 2–3 秒/请求；
+- HTML 缓存 7–30 天；
+- 404/下架/403 进入冷却；
+- 支持代理；
+- 同一作品只抓一次；
+- 批量任务低并发/串行。
+
+失败顺序：
+
+```text
+官方页失败
+→ seller 页
+→ 第三方 FC2 库
+→ JavDB
+→ 待确认 / 手工粘贴 URL
+```
+
+保存原始 HTML/JSON 快照，便于以后重新解析。
+
+### 12.8 年龄确认与合规
+
+FC2 是成人站：
+
+- 需要用户明确确认已成年；
+- 通过正常年龄确认流程保存 Cookie；
+- **不绕过登录、付费墙或 DRM**；
+- 只抓公开商品页上的封面和 sample 剧照；
+- 尊重站点条款与版权，仅用于个人归档；
+- 图片不公开再分发。
+
+### 12.9 文件名与分卷
+
+现有解析器支持：
+
+```text
+FC2-PPV-1234567
+FC2PPV-1234567
+fc2ppv1234567
+FC2-1234567
+```
+
+需补充：
+
+- `FC2-PPV-1234567-1` / `_1` 属于分卷，归到同一 Title；
+- 文件名没有 ID 时进入待确认，不猜测；
+- 避免把分卷后缀误识别成新番号。
+
+### 12.10 分阶段实施
+
+#### 第一阶段：可用
+
+- 官方页抓标题、封面、日期、简介；
+- 自动下载封面；
+- 手工 URL 导入兜底。
+
+#### 第二阶段：完整
+
+- sample 剧照解析与下载；
+- seller、tags、时长；
+- 第三方 fallback；
+- 缓存、冷却、限速。
+
+#### 第三阶段：规模化
+
+- FC2 批量任务；
+- 失败重试与人工修正队列；
+- FC2 覆盖率统计；
+- 评估官方 API / 联盟接口。
+
+### 12.11 实施清单
+
+- [ ] 新建 metadata provider 接口；
+- [ ] 实现 FC2 官方页解析；
+- [ ] 解析 sample 剧照；
+- [ ] 下载封面/剧照并写 Asset；
+- [ ] 增加 `fc2/fetch` 任务与批量任务；
+- [ ] 增加限速、缓存、403 冷却；
+- [ ] 增加 seller 页 / 第三方 fallback；
+- [ ] 增加手工 URL 兜底；
+- [ ] 增加单元测试（解析 fixture、失败兜底、分卷归一）；
+- [ ] 增加真实页面抽样验证。
+
+### 12.12 验收标准
+
+- FC2 番号可自动获取标题、封面、日期；
+- 至少能解析并下载 sample 剧照；
+- 同一作品多分卷归一；
+- 页面下架/403 不导致任务无限重试；
+- 失败进入待确认，可手工补 URL；
+- 不破坏现有 JavDB / r18 流程；
+- 图片只用于本地归档。
+
+### 12.13 风险
+
+- FC2 页面结构变化频繁，解析需要 fixture 和容错；
+- 大量作品下架，覆盖率不可能 100%；
+- 第三方库条款/稳定性不确定；
+- 年龄确认和版权合规要求；
+- 高频抓取可能导致 IP 封锁；
+- FC2 没有演员信息，元数据完整度天然低于商业番号。
+
+### 12.14 结论
+
+FC2PPV 的推荐方案：
+
+```text
+官方作品页为主
+→ JSON-LD / 内嵌 JSON / OpenGraph
+→ 封面 + sample 剧照 + 标题/日期/seller/tags
+→ 官方 API 或第三方库兜底
+→ 失败进待确认，支持手工 URL
+```
+
+复用现有 `fc2_article_url()` 与 `url_meta.py`，但扩展为独立 FC2 provider，重点补齐 sample 剧照、限速缓存和失败兜底。
