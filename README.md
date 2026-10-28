@@ -50,6 +50,7 @@
 - [测试](#测试)
 - [v1.1.0 更新计划](docs/PLAN-v1.1.0.md)
 - [后续版本路线图](docs/ROADMAP.md)
+- [v1.2.0 非标来源元数据方案](docs/PLAN-metadata-v1.2.md)
 - [安全与限制](#安全与限制)
 - [第三方组件](#第三方组件)
 - [License](#license)

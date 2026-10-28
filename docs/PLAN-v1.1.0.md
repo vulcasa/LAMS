@@ -499,6 +499,7 @@ v1.1.0 第二项采用：
 ## 12. 功能三：FC2PPV 元数据、封面与剧照获取
 
 > 状态：规划中，先不落地
+> 注：v1.2.0 元数据范围已扩展为 FC2PPV / HeyDouga / 金髪天国（KIN8）/ 欧美片，统一方案见 `docs/PLAN-metadata-v1.2.md`。
 > 目标：补齐 FC2PPV 作品的标题、日期、seller、tags、时长、封面和 sample 剧照，不再依赖 r18.dev dump。
 
 ### 12.1 背景与现状

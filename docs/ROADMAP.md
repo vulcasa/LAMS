@@ -25,7 +25,7 @@
 |---|---|---|
 | **v1.1.0** | 可靠性加固 | 磁带初始化、备份可还原、CI、数据库迁移、抽帧并行 |
 | v1.1.x | 日常维护优化 | 资产健康、SMB 触发、日志与错误体验 |
-| v1.2.0 | 远程与元数据 | 认证、GPU 转码/HLS、FC2PPV |
+| v1.2.0 | 远程与元数据 | 认证、GPU 转码/HLS、FC2PPV / HeyDouga / KIN8 / 欧美片 |
 | v1.3+ | 智能字幕 | ASR + 翻译、OCR 硬字幕 |
 
 ---
@@ -207,20 +207,24 @@ push / PR
 - 失败回退源文件；
 - 磁带不直接转码。
 
-### 5.3 FC2PPV 元数据（P1）
+### 5.3 非标来源元数据（P1）
 
 详细方案：
 
-- `docs/PLAN-v1.1.0.md` 第 12 节
+- `docs/PLAN-metadata-v1.2.md`
+- FC2 设计参考 `docs/PLAN-v1.1.0.md` 第 12 节
 
 范围：
 
-- 官方作品页；
+- FC2PPV；
+- HeyDouga；
+- 金髪天国 / KIN8；
+- 欧美片（第一版以手工 URL/NFO 为主）；
+- 统一 provider、官方页优先、第三方/JavDB fallback；
 - 封面 + sample 剧照；
-- seller/tags/日期；
-- 第三方 fallback；
+- seller/studio/tags/日期；
 - 限速/缓存/失败冷却；
-- 手工 URL 兜底。
+- 元数据完整度筛选。
 
 ---
 
