@@ -149,7 +149,18 @@
     alert: dialogAlert, confirm: dialogConfirm,
   };
 
+  function syncModalFrozen() {
+    const open = Array.from(document.querySelectorAll('.avlib-modal, .lightbox'))
+      .some(function (el) { return !el.hidden; });
+    document.body.classList.toggle('modal-frozen', open);
+  }
+
   document.addEventListener('DOMContentLoaded', function () {
+    syncModalFrozen();
+    // 任何 .avlib-modal / .lightbox 显示或隐藏时统一冻结/恢复背景滚动。
+    new MutationObserver(syncModalFrozen).observe(document.body, {
+      attributes: true, subtree: true, attributeFilter: ['hidden']
+    });
     if (document.getElementById('jobs')) {
       poll();
       setInterval(poll, 3000);
