@@ -101,8 +101,18 @@ def enqueue(kind: str, payload: dict | None = None) -> int:
 
 
 def _claim_next():
+    # 抽帧任务只允许一个 running：上一批 handler 在结束前就会 enqueue 下一批，
+    # 不能让下一批抢在上一批 mark done 之前被领取（否则会误判“已有任务在运行”而跳过，自动续跑断链）。
     row = db.session.execute(
-        text("SELECT id FROM job WHERE status='pending' ORDER BY id LIMIT 1")
+        text(
+            "SELECT id FROM job WHERE status='pending' "
+            "AND NOT (kind='video_frames_batch' AND EXISTS ("
+            "  SELECT 1 FROM job AS running_frame "
+            "  WHERE running_frame.kind='video_frames_batch' "
+            "  AND running_frame.status='running'"
+            ")) "
+            "ORDER BY id LIMIT 1"
+        )
     ).fetchone()
     if not row:
         return None

@@ -159,3 +159,23 @@ def test_activity_page_has_job_controls(app):
     assert "jobControl(" in html
     assert "暂停" in html
     assert "停止" in html
+
+
+def test_claim_next_does_not_start_second_frame_batch_while_one_running(app):
+    """上一批抽帧还在 running 时，它提前入队的下一批必须等待，不能被提前领走。"""
+    with app.app_context():
+        running = Job(kind="video_frames_batch", payload="{}", status="running")
+        next_frame = Job(kind="video_frames_batch", payload="{}", status="pending")
+        other = Job(kind="cover_fill", payload="{}", status="pending")
+        db.session.add_all([running, next_frame, other])
+        db.session.commit()
+
+        # 抽帧下一批不能先被领走；其它任务仍可运行
+        claimed = jobs._claim_next()
+        assert claimed is not None and claimed.id == other.id
+        jobs._finish(claimed.id, "done", result={"ok": True})
+        jobs._finish(running.id, "done", result={"ok": True})
+
+        # 上一批结束后，下一批才能被领取
+        claimed = jobs._claim_next()
+        assert claimed is not None and claimed.id == next_frame.id
