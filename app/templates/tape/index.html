@@ -22,6 +22,7 @@
     <button class="btn primary tape-action-btn" id="tapeMountBtn" onclick="tapeOp('mount', this)">挂载</button>
     <button class="btn" onclick="tapeOp('unmount')">卸载</button>
     <button class="btn danger tape-action-btn" id="tapeEjectBtn" onclick="tapeOp('eject', this)">弹出</button>
+    <button class="btn" id="tapeManualBtn" onclick="openTapeManualBarcode({})">手动条码</button>
   </div>
   <p class="muted">挂载是挂"当前插入的那盘"，不能指定条码；填了预期条码会做防串盘比对，不符会自动卸载并弹出。</p>
 </section>
@@ -131,6 +132,54 @@ function closeTapeModal(force) {
   tapeModalLocked = false;
   document.body.classList.remove('modal-frozen');
 }
+function openTapeManualBarcode(data, errorMessage) {
+  data = data || {};
+  const detected = data.detected_barcode || '';
+  tapeModal('手动指定磁带条码', `
+    <p>LTFS 已挂载，但无法读取磁带条码。若磁带物理标签上有 6 位条码，可在这里手动登记。</p>
+    <p class="tape-warning">仅用于条码不可读的磁带；输入必须与磁带物理标签一致。</p>
+    <label class="tape-field">物理条码
+      <input id="tapeManualBarcode" maxlength="6" value="${escTape(detected)}" placeholder="如 FB1186">
+    </label>
+    <label class="checkbox tape-check"><input type="checkbox" id="tapeManualConfirm"> 我确认输入的是磁带物理标签上的条码</label>
+    <p class="tape-modal-error" id="tapeManualError">${escTape(errorMessage || '')}</p>
+  `, [
+    { text: '取消', onClick: closeTapeModal },
+    { text: '登记并完成挂载', cls: 'primary', onClick: function () { doManualBarcode(data); } },
+  ]);
+  const input = document.getElementById('tapeManualBarcode');
+  const confirm = document.getElementById('tapeManualConfirm');
+  function refresh() {
+    const valid = /^[A-Za-z0-9]{6}$/.test((input.value || '').trim());
+    const btn = [...document.querySelectorAll('#tapeModalActions .btn')].find(b => b.classList.contains('primary'));
+    if (btn) btn.disabled = !(valid && confirm.checked);
+  }
+  input.addEventListener('input', refresh); confirm.addEventListener('change', refresh); refresh();
+}
+
+async function doManualBarcode(data) {
+  const barcode = (document.getElementById('tapeManualBarcode').value || '').trim().toUpperCase();
+  const confirmed = document.getElementById('tapeManualConfirm').checked;
+  if (!/^[A-Za-z0-9]{6}$/.test(barcode) || !confirmed) return;
+  tapeModal('正在登记条码', `<p>正在按手动条码 ${escTape(barcode)} 登记当前已挂载的磁带，请稍候…</p>`, [], {locked: true});
+  const expected = document.getElementById('expect-barcode').value || null;
+  let ok = false, result = {};
+  try {
+    [ok, result] = await tapePost('/api/tape/mount', {
+      manual_barcode: barcode, manual_confirm: true, expected_barcode: expected,
+    });
+  } catch (err) {
+    result = {message: '登记请求失败：' + (err && err.message ? err.message : String(err))};
+  }
+  if (ok && result.ok) {
+    tapeModal('挂载成功', `<p>${escTape(result.message || '磁带已挂载')}</p><p>当前磁带：<b>${escTape(result.barcode || barcode)}</b></p>`, [
+      { text: '确认', cls: 'primary', onClick: function () { closeTapeModal(true); location.reload(); } },
+    ], {locked: true, hideClose: true});
+    return;
+  }
+  openTapeManualBarcode(data, result.message || result.error || '手动登记失败');
+}
+
 function openTapeFormat(data) {
   if (!data || !data.operation_id) {
     avlib.alert('缺少挂载失败上下文，请重新执行挂载。', '初始化被拒绝');
@@ -334,6 +383,10 @@ async function tapeOp(action, actionButton) {
       `, [
         { text: '确认', cls: 'primary', onClick: function () { closeTapeModal(true); location.reload(); } },
       ], {locked: true, hideClose: true});
+      return;
+    }
+    if (isMount && data.needs_manual_barcode) {
+      openTapeManualBarcode(data);
       return;
     }
     if (isMount && data.needs_init) {

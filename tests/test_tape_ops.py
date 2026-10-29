@@ -442,20 +442,28 @@ def test_mount_tape_barcode_mismatch_unmounts_without_eject(app, tools):
     assert "条码不符" in (operation.message or "")
 
 
-def test_mount_tape_unknown_barcode_unmounts_without_eject(app, tools):
+def test_mount_tape_unknown_barcode_keeps_mounted_for_manual_barcode(app, tools):
     tools.configure("mount", out="mounted but no barcode\n")  # 解析不出条码 → UNKNOWN
     tools.mounted_path = os.path.realpath(str(tools.mount_point))
-    tools.umount_ok()
     adapter = make_adapter(app, tools)
 
     result = mount_tape(app, adapter=adapter)
 
     assert result["ok"] is False
+    assert result["needs_manual_barcode"] is True
     assert "实际条码不可用" in result["message"]
-    assert [line.split()[0] for line in tools.calls()] == ["ltfs", "umount"]
+    # 读不到条码时保持挂载，不再自动卸载/弹出
+    assert [line.split()[0] for line in tools.calls()] == ["ltfs"]
     assert not any("release_device" in line for line in tools.calls())
     assert LibraryVolume.query.filter_by(kind="tape").count() == 0
     assert latest_op().status == "failed"
+
+    manual = mount_tape(app, manual_barcode="FB1234", manual_confirm=True, adapter=adapter)
+    assert manual["ok"] is True
+    assert manual["barcode"] == "FB1234"
+    assert manual["manual_barcode"] is True
+    assert volume("FB1234").status == "mounted"
+    assert [line.split()[0] for line in tools.calls()] == ["ltfs"]  # 没有再次 mount
 
 
 def test_mount_tape_device_failure_keeps_db_unchanged(app, tools):

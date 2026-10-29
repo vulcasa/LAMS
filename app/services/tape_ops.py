@@ -479,12 +479,18 @@ def mount_tape(
     app,
     expected_barcode: str | None = None,
     *,
+    manual_barcode: str | None = None,
+    manual_confirm: bool = False,
     adapter: TapeAdapter | None = None,
 ) -> dict:
     """挂载当前插入的磁带（mount 不能选盘），成功后登记卷。
 
     ``expected_barcode`` 给了就做防串盘校验：实际条码必须非 UNKNOWN 且与它一致；
-    否则立即卸载+弹出并记 failed。**不抛异常**。
+    否则只卸载、绝不自动弹出，并记 failed。
+
+    ``manual_barcode`` 是例外通道：用于磁带上贴了物理条码、但 LTFS 初始化时
+    没写入 barcode、挂载后读不到条码的磁带。必须已经 mounted 且实际条码不可用，
+    用户确认后才能按手输条码登记；已有可读条码的磁带不允许用它绕过校验。
     """
     started = time.monotonic()
     operation: TapeOperation | None = None
@@ -499,7 +505,74 @@ def mount_tape(
                     "barcode": None,
                     "status": None,
                 }
+            manual_n = _normalize_init_barcode(manual_barcode)
+            if manual_barcode is not None:
+                if not manual_confirm:
+                    return {
+                        "ok": False, "code": "manual_not_confirmed",
+                        "message": "手动条码必须确认后才能登记",
+                    }
+                if manual_n is None:
+                    return {
+                        "ok": False, "code": "invalid_barcode",
+                        "message": "手动条码必须是 6 位字母或数字",
+                    }
 
+            if manual_n is not None:
+                # 手动条码只用于“已经挂载、但 LTFS 读不到条码”的例外磁带。
+                current_status = None
+                try:
+                    current_status = tape_adapter.status()
+                except Exception:  # noqa: BLE001
+                    current_status = None
+                mounted_now = bool(getattr(current_status, "mounted", False))
+                actual_now = normalize_barcode(getattr(current_status, "barcode", None))
+                if not barcode_is_usable(actual_now):
+                    label_fn = getattr(tape_adapter, "volume_label", None)
+                    if callable(label_fn):
+                        try:
+                            actual_now = normalize_barcode(label_fn())
+                        except Exception:  # noqa: BLE001
+                            pass
+                if not mounted_now:
+                    return {
+                        "ok": False, "code": "not_mounted",
+                        "message": "当前没有已挂载的磁带，无法手动登记条码",
+                    }
+                if barcode_is_usable(actual_now):
+                    return {
+                        "ok": False, "code": "barcode_readable",
+                        "message": "当前磁带条码可正常读取，不允许手动覆盖",
+                    }
+                if expected is not None and not barcode_matches(manual_n, expected):
+                    return {
+                        "ok": False, "code": "barcode_mismatch",
+                        "message": f"手动条码 {manual_n} 与预期条码 {expected} 不一致",
+                    }
+                operation = _start_operation("mount", barcode=manual_n)
+                volume, created = _upsert_volume(manual_n)
+                for other in _mounted_volumes():
+                    if other.id != volume.id:
+                        _set_volume_status(other, "unknown")
+                volume.status = "mounted"
+                volume.device_path = getattr(tape_adapter, "device_path", None) or volume.device_path
+                volume.last_mounted_at = utcnow()
+                volume.last_error = None
+                db.session.commit()
+                detail = f"磁带已挂载，按手动条码 {manual_n} 登记"
+                _finish_operation(operation, ok=True, message=detail,
+                                  started=started, volume_id=volume.id)
+                return {
+                    "ok": True,
+                    "message": detail,
+                    "barcode": manual_n,
+                    "status": "mounted",
+                    "manual_barcode": True,
+                    "operation_id": operation.id,
+                    "volume_id": volume.id,
+                    "volume": _volume_dict(volume),
+                    "created_volume": created,
+                }
             operation = _start_operation("mount", barcode=expected)
             try:
                 ok, message, actual = tape_adapter.mount()
@@ -549,12 +622,9 @@ def mount_tape(
                     "barcode_registered": registered is not None,
                 }
 
-            # --- 防串盘：条码不可用 / 与预期不符 → 退出磁带并记 failed ------
+            # --- 防串盘：条码不可用 → 保持挂载，交给用户手动登记例外通道 ------
             if not barcode_is_usable(actual_n):
-                problems = _cleanup_tape(tape_adapter)
-                detail = f"实际条码不可用（{actual_n or '空'}）：已卸载，未自动弹出，拒绝登记"
-                if problems:
-                    detail += f"；{problems}"
+                detail = f"实际条码不可用（{actual_n or '空'}）：磁带保持挂载，可手动输入物理条码登记（不会自动弹出）"
                 _finish_operation(
                     operation,
                     ok=False,
@@ -567,6 +637,9 @@ def mount_tape(
                 return {
                     "ok": False,
                     "message": detail,
+                    "code": "barcode_unreadable",
+                    "needs_manual_barcode": True,
+                    "detected_barcode": None,
                     "barcode": None,
                     "operation_id": operation.id,
                     "volume": _volume_dict(volume) if volume is not None else None,

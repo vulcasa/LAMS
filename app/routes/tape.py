@@ -82,6 +82,8 @@ def api_mount():
         result = mount_tape(
             current_app._get_current_object(),
             expected_barcode=(data.get("expected_barcode") or "").strip() or None,
+            manual_barcode=(data.get("manual_barcode") or "").strip() or None,
+            manual_confirm=bool(data.get("manual_confirm")),
         )
         return jsonify(result), (200 if result.get("ok") else 400)
     except Exception as exc:  # noqa: BLE001
