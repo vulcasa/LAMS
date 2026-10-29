@@ -4,7 +4,7 @@
 [![Flask](https://img.shields.io/badge/Flask-3.x-000000?logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
 [![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
 [![Version](https://img.shields.io/badge/version-1.1.8-blue)]()
-[![Tests](https://img.shields.io/badge/tests-869%20passed-brightgreen)](#测试)
+[![Tests](https://img.shields.io/badge/tests-873%20passed-brightgreen)](#测试)
 
 **LAMS** 是一个自托管的个人 AV 归档管理系统，用来把 **NAS 热数据** 与 **LTO 磁带冷数据** 统一编目、检索、播放和备份。
 
@@ -51,7 +51,8 @@
 - [数据目录](#数据目录)
 - [测试](#测试)
 - [v1.1.0 更新计划](docs/PLAN-v1.1.0.md)
-- [更新记录](CHANGELOG.md)
+- [版本更新记录](#版本更新记录)
+- [完整更新日志](CHANGELOG.md)
 - [后续版本路线图](docs/ROADMAP.md)
 - [v1.2.0 非标来源元数据方案](docs/PLAN-metadata-v1.2.md)
 - [安全与限制](#安全与限制)
@@ -127,7 +128,7 @@
 | 磁带 | 内置开源 LTFS（编译进镜像） |
 | 媒体工具 | ffmpeg / ffprobe（仅用于抽帧、缩略图等，不用于播放转码） |
 
-当前测试：**869 passed**。
+当前测试：**873 passed**。
 
 ---
 
@@ -236,7 +237,7 @@ av-archive/
 │   ├── selfcheck.py            # 部署自检
 │   ├── worker.py               # 独立 worker 进程
 │   └── make_dist.py            # 代码包打包
-├── tests/                      # pytest（869 用例）
+├── tests/                      # pytest（873 用例）
 ├── docs/                       # 设计、部署、契约、截图
 ├── research/                   # 数据源 / 字幕 / 覆盖率调研
 ├── vendor/                     # LTFS / uthash 源码包（用于镜像构建）
@@ -574,7 +575,7 @@ data/
 .venv/bin/python -m pytest tests/ -q
 ```
 
-当前：**869 passed**。
+当前：**873 passed**。
 
 测试覆盖：
 
@@ -588,6 +589,24 @@ data/
 - 数据库快照、完整备份与还原。
 
 ---
+
+## 版本更新记录
+
+> 每次发版同时更新本表、[CHANGELOG.md](CHANGELOG.md) 和 `VERSION`。
+
+| 版本 | 日期 | 主要更新 |
+|---|---|---|
+| v1.1.8 | 2026-10-29 | 所有弹窗打开时冻结背景滚动，关闭最后一个弹窗后恢复 |
+| v1.1.7 | 2026-10-29 | 无条码磁带支持手动输入物理条码登记并挂载 |
+| v1.1.6 | 2026-10-29 | 挂载失败只卸载不再自动弹出；合并弹出交互、文件传输进度/ETA、待确认筛选、备份 sha256 保留 |
+| v1.1.5 | 2026-10-29 | 挂载按钮旋转动画、阻塞式挂载进度弹窗、成功/失败确认 |
+| v1.1.4 | 2026-10-29 | 修复抽帧自动续跑竞态，抽帧批次同一时间只允许一个运行 |
+| v1.1.3 | 2026-10-29 | 安装器增加代理交互、Debian minimal 基础包和 systemd 检查 |
+| v1.1.2 | 2026-10-29 | 安装器按 ltfs-webui 流程从官方源码编译 LTFS，提供 vendor 回退 |
+| v1.1.1 | 2026-10-29 | 新增一键安装脚本，支持 Linux 发行版/macOS、systemd/launchd 和 5080 端口 |
+| v1.1.0 | 2026-10-29 | 磁带初始化/ltfsck 恢复、盘点复用挂载、抽帧失败标记与自动续跑、资产任务并行 |
+
+更早版本记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 安全与限制
 
