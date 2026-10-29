@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.1.1 — 2026-10-29
+
+### 一键安装
+
+- 新增 `install.sh`，支持 Debian/Ubuntu、RHEL/Fedora/Rocky/Alma、Arch、openSUSE 和 macOS；
+- 自动安装 Python、ffmpeg、CIFS、SMB、磁带工具及构建依赖；
+- 自动从 GitHub 拉取最新代码；
+- 默认程序目录 `/opt/lams`，默认数据目录 `/lams/data`；
+- 自动创建 Python venv 并安装生产依赖；
+- Linux 自动编译 vendor 中的 LTFS，macOS 跳过 LTFS；
+- Linux 注册 systemd 服务，macOS 注册 launchd 服务，支持开机自启；
+- 尝试通过 ufw/firewalld/nftables/iptables 开放 TCP 5080；
+- 首次安装不会覆盖已有数据目录。
+
+
 ## v1.1.0 — 2026-10-29
 
 ### 磁带初始化与恢复

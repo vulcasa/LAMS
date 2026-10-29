@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Flask](https://img.shields.io/badge/Flask-3.x-000000?logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
 [![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
-[![Version](https://img.shields.io/badge/version-1.1.0-blue)]()
+[![Version](https://img.shields.io/badge/version-1.1.1-blue)]()
 [![Tests](https://img.shields.io/badge/tests-869%20passed-brightgreen)](#测试)
 
 **LAMS** 是一个自托管的个人 AV 归档管理系统，用来把 **NAS 热数据** 与 **LTO 磁带冷数据** 统一编目、检索、播放和备份。
@@ -44,6 +44,7 @@
   - [8. 备份与还原](#8-备份与还原)
   - [9. 移动端与 UI](#9-移动端与-ui)
 - [快速开始](#快速开始)
+- [一键安装](#一键安装)
 - [Docker 部署](#docker-部署)
 - [页面与 API](#页面与-api)
 - [环境变量](#环境变量)
@@ -416,6 +417,24 @@ python -m scripts.import_dump --sql data/dump/latest.sql --out data/r18dump.db
 之后在「刮削」页执行「番号 → 元数据物化」，再按需补封面、剧照、截图。
 
 ---
+
+
+## 一键安装
+
+Linux / macOS 原生安装（systemd / launchd）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/vulcasa/LAMS/main/install.sh -o install.sh
+sudo bash install.sh
+```
+
+- 程序目录：`/opt/lams`
+- 数据目录：`/lams/data`
+- 端口：`5080`
+- 自动安装依赖、拉取 GitHub 最新代码、注册开机自启、尝试开放防火墙端口
+- 提供 `--skip-ltfs`（仅媒体库）和 `--update`（更新已有安装）等选项
+
+Docker 部署仍使用 `docker-compose.yml`。
 
 ## Docker 部署
 
