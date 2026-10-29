@@ -611,3 +611,17 @@ select {
   width: 16px; height: 16px; min-width: 16px; margin: 1px 0 0;
   accent-color: var(--accent2); flex: 0 0 auto;
 }
+
+/* 挂载进行中：按钮旋转圈 + 弹窗锁页 */
+body.modal-frozen { overflow: hidden; }
+#tapeMountBtn { min-width: 112px; }
+#tapeMountBtn.is-busy { pointer-events: none; }
+.btn-spinner {
+  width: 18px; height: 18px; display: inline-block;
+  border: 2px solid rgba(255, 255, 255, .35);
+  border-top-color: #fff; border-radius: 50%;
+  animation: tape-spin .75s linear infinite;
+  box-sizing: border-box;
+}
+@keyframes tape-spin { to { transform: rotate(360deg); } }
+#tapeModalClose[hidden] { display: none !important; }

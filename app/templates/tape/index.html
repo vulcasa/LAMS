@@ -19,7 +19,7 @@
       <option value="">不校验（默认）</option>
       {% for barcode in barcode_options %}<option value="{{ barcode }}">{{ barcode }}</option>{% endfor %}
     </select>
-    <button class="btn primary" onclick="tapeOp('mount')">挂载当前插入的磁带</button>
+    <button class="btn primary" id="tapeMountBtn" onclick="tapeOp('mount', this)">挂载磁带</button>
     <button class="btn" onclick="tapeOp('unmount')">卸载</button>
     <button class="btn danger" onclick="tapeOp('eject')">弹出</button>
   </div>
@@ -106,9 +106,13 @@ async function tapePost(path, body) {
   const r = await fetch(path, { method: 'POST', headers: headers, body: JSON.stringify(body || {}) });
   return [r.ok, await r.json().catch(function () { return {}; })];
 }
-function tapeModal(title, body, actions) {
+let tapeModalLocked = false;
+function tapeModal(title, body, actions, opts) {
+  opts = opts || {};
+  tapeModalLocked = !!opts.locked;
   document.getElementById('tapeModalTitle').textContent = title;
   document.getElementById('tapeModalBody').innerHTML = body;
+  document.getElementById('tapeModalClose').hidden = tapeModalLocked || !!opts.hideClose;
   const wrap = document.getElementById('tapeModalActions');
   wrap.innerHTML = '';
   (actions || []).forEach(function (a) {
@@ -119,9 +123,13 @@ function tapeModal(title, body, actions) {
     wrap.appendChild(b);
   });
   document.getElementById('tapeModal').hidden = false;
+  document.body.classList.add('modal-frozen');
 }
-function closeTapeModal() {
+function closeTapeModal(force) {
+  if (tapeModalLocked && !force) return;
   document.getElementById('tapeModal').hidden = true;
+  tapeModalLocked = false;
+  document.body.classList.remove('modal-frozen');
 }
 function openTapeFormat(data) {
   if (!data || !data.operation_id) {
@@ -252,7 +260,7 @@ async function runTapeRecover(data, generation) {
     ...(data.barcode_registered ? [] : [{ text: '不恢复，格式化…', onClick: function () { openTapeFormat(data); } }]),
   ]);
 }
-document.getElementById('tapeModalClose').addEventListener('click', closeTapeModal);
+document.getElementById('tapeModalClose').addEventListener('click', function () { closeTapeModal(); });
 document.addEventListener('keydown', function (event) {
   if (event.key === 'Escape' && !document.getElementById('tapeModal').hidden) {
     closeTapeModal();
@@ -262,7 +270,7 @@ document.getElementById('tapeModal').addEventListener('click', function (e) {
   if (e.target === this) closeTapeModal();
 });
 
-async function tapeOp(action) {
+async function tapeOp(action, mountButton) {
   if (action === 'unmount') {
     if (!await avlib.confirm('确定要卸载当前磁带吗？卸载后磁带仍保持插入状态。', '卸载磁带')) return;
   } else if (action === 'eject') {
@@ -271,21 +279,81 @@ async function tapeOp(action) {
   const body = action === 'mount'
     ? { expected_barcode: document.getElementById('expect-barcode').value || null }
     : {};
+
+  if (action === 'mount') {
+    const btn = mountButton || document.getElementById('tapeMountBtn');
+    const original = btn ? btn.innerHTML : '挂载磁带';
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add('is-busy');
+      btn.setAttribute('aria-label', '正在挂载磁带');
+      btn.setAttribute('aria-busy', 'true');
+      btn.innerHTML = '<span class="btn-spinner" aria-hidden="true"></span>';
+    }
+    // 请求发出前就把页面锁住：挂载期间禁止点击底层页面、关闭弹窗或按 Esc。
+    tapeModal('正在挂载磁带', `
+      <p>正在读取并挂载当前插入的磁带，请稍候…</p>
+      <p class="muted">挂载完成前请不要操作磁带或关闭页面。</p>
+    `, [], {locked: true});
+    let ok = false, data = {};
+    try {
+      [ok, data] = await tapePost('/api/tape/mount', body);
+    } catch (err) {
+      data = {ok: false, message: '挂载请求失败：' + (err && err.message ? err.message : String(err))};
+    }
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.remove('is-busy');
+      btn.removeAttribute('aria-busy');
+      btn.removeAttribute('aria-label');
+      btn.innerHTML = original;
+    }
+    if (ok && data.ok) {
+      tapeModal('挂载成功', `
+        <p>${escTape(data.message || '磁带挂载成功')}</p>
+        ${data.barcode ? `<p>当前磁带：<b>${escTape(data.barcode)}</b></p>` : ''}
+      `, [
+        { text: '确认', cls: 'primary', onClick: function () { closeTapeModal(true); location.reload(); } },
+      ], {locked: true, hideClose: true});
+      return;
+    }
+    if (data.needs_init) {
+      if (data.barcode_registered) {
+        tapeModal('挂载失败', `
+          <p class="tape-modal-error">${escTape(data.message || '磁带回读失败')}</p>
+          <p>该磁带条码已在库中登记，禁止格式化。请检查磁带索引或挂载状态。</p>
+        `, [
+          { text: '确认', cls: 'primary', onClick: function () { closeTapeModal(true); } },
+        ], {locked: true, hideClose: true});
+      } else {
+        tapeModal('挂载失败', `
+          <p class="tape-modal-error">${escTape(data.message || '磁带回读失败')}</p>
+          <p>该磁带未初始化。确认后将进入初始化/恢复流程。</p>
+        `, [
+          { text: '确认', cls: 'primary', onClick: function () {
+              closeTapeModal(true);
+              openTapeRecovery(data);
+          } },
+        ], {locked: true, hideClose: true});
+      }
+      return;
+    }
+    tapeModal('挂载失败', `
+      <p class="tape-modal-error">${escTape(data.message || data.error || '未知错误')}</p>
+    `, [
+      { text: '确认', cls: 'primary', onClick: function () { closeTapeModal(true); } },
+    ], {locked: true, hideClose: true});
+    return;
+  }
+
   const [ok, data] = await tapePost('/api/tape/' + action, body);
   if (ok && data.ok) {
     await avlib.alert((data.message || '成功'), '操作成功');
     location.reload();
     return;
   }
-  if (action === 'mount' && data.needs_init) {
-    if (data.barcode_registered) {
-      await avlib.alert('该磁带已在库中登记，不能格式化。请检查磁带索引或挂载状态。', '已登记磁带');
-      return;
-    }
-    openTapeRecovery(data);
-    return;
-  }
   await avlib.alert((data.message || data.error || JSON.stringify(data)), '操作失败');
 }
+
 </script>
 {% endblock %}
