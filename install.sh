@@ -12,6 +12,8 @@ LAMS_PORT="${LAMS_PORT:-5080}"
 LAMS_TAPE_DEVICE="${LAMS_TAPE_DEVICE:-/dev/sg10}"
 LAMS_THREADS="${LAMS_THREADS:-12}"
 LAMS_SKIP_LTFS="${LAMS_SKIP_LTFS:-0}"
+LAMS_LTFS_REPO="${LAMS_LTFS_REPO:-https://github.com/LinearTapeFileSystem/ltfs.git}"
+LAMS_LTFS_SOURCE="${LAMS_LTFS_SOURCE:-github}"
 LAMS_UPDATE=0
 
 say()  { printf '\033[1;34m[LAMS]\033[0m %s\n' "$*"; }
@@ -35,6 +37,8 @@ LAMS 一键安装脚本
   --tape-device DEV   磁带设备（默认: ${LAMS_TAPE_DEVICE}）
   --threads N         Gunicorn 线程数（默认: ${LAMS_THREADS}）
   --skip-ltfs         不编译 LTFS（仅媒体库，不启用磁带）
+  --ltfs-repo URL     官方 LTFS 源码地址（默认: ${LAMS_LTFS_REPO}）
+  --ltfs-source SRC   github 或 vendor（默认: ${LAMS_LTFS_SOURCE}）
   --update            更新已有安装（会尝试 fast-forward）
   -h, --help          显示帮助
 
@@ -55,6 +59,8 @@ while [[ $# -gt 0 ]]; do
     --tape-device) LAMS_TAPE_DEVICE="$2"; shift 2 ;;
     --threads) LAMS_THREADS="$2"; shift 2 ;;
     --skip-ltfs) LAMS_SKIP_LTFS=1; shift ;;
+    --ltfs-repo) LAMS_LTFS_REPO="$2"; shift 2 ;;
+    --ltfs-source) LAMS_LTFS_SOURCE="$2"; shift 2 ;;
     --update) LAMS_UPDATE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "未知参数: $1" ;;
@@ -110,7 +116,7 @@ install_linux_packages() {
       apt-get update -y
       apt-get install -y --no-install-recommends \
         python3 python3-venv python3-pip git curl ca-certificates \
-        ffmpeg cifs-utils sg3-utils mt-st util-linux \
+        ffmpeg cifs-utils sg3-utils mt-st lsscsi util-linux \
         build-essential autoconf automake libtool pkg-config \
         libfuse-dev libxml2-dev libssl-dev libsnmp-dev libicu-dev uuid-dev \
         openssl
@@ -119,7 +125,7 @@ install_linux_packages() {
       $pm install -y epel-release || true
       $pm install -y \
         python3 python3-pip python3-devel git curl ca-certificates \
-        cifs-utils sg3_utils mt-st util-linux \
+        cifs-utils sg3_utils mt-st lsscsi util-linux \
         gcc gcc-c++ make autoconf automake libtool pkgconf-pkg-config \
         fuse-devel libxml2-devel openssl-devel net-snmp-devel libicu-devel libuuid-devel \
         openssl
@@ -128,13 +134,13 @@ install_linux_packages() {
       ;;
     pacman)
       pacman -Sy --noconfirm --needed \
-        python python-pip git curl ca-certificates ffmpeg cifs-utils sg3_utils mt-st util-linux \
+        python python-pip git curl ca-certificates ffmpeg cifs-utils sg3_utils mt-st lsscsi util-linux \
         base-devel autoconf automake libtool pkgconf fuse libxml2 openssl net-snmp icu
       ;;
     zypper)
       zypper --non-interactive refresh || true
       zypper --non-interactive install -y \
-        python3 python3-pip python3-devel git curl ca-certificates ffmpeg cifs-utils sg3_utils mt-st util-linux \
+        python3 python3-pip python3-devel git curl ca-certificates ffmpeg cifs-utils sg3_utils mt-st lsscsi util-linux \
         gcc gcc-c++ make autoconf automake libtool pkg-config fuse-devel libxml2-devel libopenssl-devel net-snmp-devel libicu-devel uuid-devel openssl
       ;;
   esac
@@ -221,30 +227,57 @@ build_ltfs() {
     say "检测到已有 LTFS，跳过编译"
     return 0
   fi
-  local ltfs_tar uthash_tar build
-  ltfs_tar="$(find "$LAMS_HOME/vendor" -maxdepth 1 -name 'ltfs-*.tar.gz' | sort | head -1 || true)"
-  uthash_tar="$(find "$LAMS_HOME/vendor" -maxdepth 1 -name 'uthash-*.tar.gz' | sort | head -1 || true)"
-  [[ -n "$ltfs_tar" && -n uthash_tar ]] || { LTFS_STATUS="missing-source"; warn "vendor 中缺少 LTFS 源码，磁带功能不可用"; return 0; }
+
+  local build
   build="$(mktemp -d /tmp/lams-ltfs.XXXXXX)"
   say "编译 LTFS（首次可能需要几分钟）"
-  mkdir -p "$build/ltfs"
-  tar xzf "$ltfs_tar" -C "$build/ltfs" --strip-components=1
-  mkdir -p "$build/ltfs/src/libltfs/uthash_submodule"
-  tar xzf "$uthash_tar" -C "$build/ltfs/src/libltfs/uthash_submodule" --strip-components=1
-  (
+
+  # 与 ltfs-webui 已验证的 Dockerfile 一致：clone 官方源码后 autogen/configure/make install。
+  local use_vendor=0
+  if [[ "$LAMS_LTFS_SOURCE" == "vendor" ]]; then
+    use_vendor=1
+  elif ! git clone --depth 1 "$LAMS_LTFS_REPO" "$build/ltfs"; then
+    warn "GitHub LTFS 源码拉取失败，回退到项目 vendor 源码"
+    use_vendor=1
+  fi
+
+  if [[ "$use_vendor" -eq 1 ]]; then
+    local ltfs_tar uthash_tar
+    ltfs_tar="$(find "$LAMS_HOME/vendor" -maxdepth 1 -name 'ltfs-*.tar.gz' | sort | head -1 || true)"
+    uthash_tar="$(find "$LAMS_HOME/vendor" -maxdepth 1 -name 'uthash-*.tar.gz' | sort | head -1 || true)"
+    if [[ -z "$ltfs_tar" || -z "$uthash_tar" ]]; then
+      LTFS_STATUS="missing-source"
+      warn "vendor 中缺少 LTFS/uthash 源码，磁带功能不可用"
+      rm -rf "$build"
+      return 0
+    fi
+    mkdir -p "$build/ltfs"
+    tar xzf "$ltfs_tar" -C "$build/ltfs" --strip-components=1
+    mkdir -p "$build/ltfs/src/libltfs/uthash_submodule"
+    tar xzf "$uthash_tar" -C "$build/ltfs/src/libltfs/uthash_submodule" --strip-components=1
+  fi
+
+  if (
     cd "$build/ltfs"
     ./autogen.sh
-    ./configure --prefix=/usr --sysconfdir=/etc
+    ./configure --prefix=/usr
     make -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
     make install
-  )
-  have ldconfig && ldconfig || true
-  rm -rf "$build"
-  if have ltfs && have mkltfs; then
+  ); then
+    have ldconfig && ldconfig || true
     LTFS_STATUS="built"
   else
     LTFS_STATUS="build-failed"
-    warn "LTFS 编译完成但命令不可用；磁带功能可能不可用"
+    warn "LTFS 编译失败；请检查编译依赖，或使用 --skip-ltfs 仅安装媒体库"
+  fi
+  rm -rf "$build"
+  if [[ "$LTFS_STATUS" == "built" ]]; then
+    if have ltfs && have mkltfs; then
+      say "LTFS 编译安装完成"
+    else
+      LTFS_STATUS="build-failed"
+      warn "LTFS 编译完成但 ltfs/mkltfs 命令不可用"
+    fi
   fi
 }
 

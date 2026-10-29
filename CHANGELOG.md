@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.1.2 — 2026-10-29
+
+### 一键安装的 LTFS 编译修正
+
+- 按 `ltfs-webui` 已验证的流程，优先从官方 `LinearTapeFileSystem/ltfs` clone 源码；
+- 使用 `./autogen.sh && ./configure --prefix=/usr && make install` 编译；
+- 增加 `lsscsi` 等磁带设备依赖；
+- GitHub 不可达时回退项目 `vendor/` 中的 LTFS 源码；
+- 保留 `--skip-ltfs`、`--ltfs-source vendor` 等离线/仅媒体库选项。
+
+
 ## v1.1.1 — 2026-10-29
 
 ### 一键安装
