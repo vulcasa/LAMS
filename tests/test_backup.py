@@ -168,7 +168,7 @@ def test_create_backup_missing_source_raises(app):
 # ---------------------------------------------------------------------------
 # 2. 轮换 / 同秒冲突
 # ---------------------------------------------------------------------------
-def test_rotation_keeps_newest_and_removes_sidecar(app):
+def test_rotation_keeps_newest_and_keeps_sidecar(app):
     _seed_titles(app, count=1)
 
     first = create_backup(app, keep=10)
@@ -182,7 +182,8 @@ def test_rotation_keeps_newest_and_removes_sidecar(app):
     assert names == {second["name"], third["name"]}
     assert first["name"] in third["removed"]
     assert not (backup_dir(app) / first["name"]).exists()
-    assert not (backup_dir(app) / (first["name"] + ".sha256")).exists()
+    # sha256 边车保留
+    assert (backup_dir(app) / (first["name"] + ".sha256")).exists()
 
 
 def test_rotation_uses_config_backup_keep(app):
@@ -276,7 +277,7 @@ def test_verify_missing_file(app):
 # ---------------------------------------------------------------------------
 # 4. 删除
 # ---------------------------------------------------------------------------
-def test_delete_backup_removes_db_and_sidecar(app):
+def test_delete_backup_removes_db_but_keeps_sidecar(app):
     _seed_titles(app, count=1)
     result = create_backup(app, keep=5)
     path = Path(result["path"])
@@ -286,8 +287,9 @@ def test_delete_backup_removes_db_and_sidecar(app):
 
     assert deleted["deleted"] is True
     assert deleted["bytes"] == result["bytes"]
-    assert deleted["sidecar_deleted"] is True
-    assert not path.exists() and not sidecar.exists()
+    assert deleted["sidecar_deleted"] is False
+    assert deleted["sidecar_kept"] is True
+    assert not path.exists() and sidecar.exists()
     assert list_backups(app) == []
 
 

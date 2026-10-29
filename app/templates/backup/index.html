@@ -22,6 +22,7 @@
 
 <section class="panel">
   <h2>完整备份</h2>
+  <p class="muted">删除只移除备份文件，保留 sha256 校验文件，不会删除数据库、片库或其它记录。</p>
   {% if full_backups %}
   <table class="data backup-table">
     <colgroup><col class="backup-col-name"><col class="backup-col-size"><col class="backup-col-time"><col class="backup-col-sha"><col class="backup-col-actions"></colgroup>
@@ -124,7 +125,7 @@ async function fetchRestore(body, headers) {
   location.reload();
 }
 async function deleteFull(name) {
-  if (!await avlib.confirm('删除 ' + name + '？', '删除完整备份')) return;
+  if (!await avlib.confirm('仅删除备份文件 ' + name + '，保留 sha256 校验文件，不会删除数据库或片库记录。确定继续？', '删除完整备份')) return;
   const [ok, data] = await post('/api/backup/full/delete', { name });
   if (ok && data.ok !== false) location.reload();
   else await avlib.alert('删除失败：' + (data.error || JSON.stringify(data)), '删除失败');

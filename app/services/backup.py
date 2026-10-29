@@ -253,8 +253,8 @@ def _rotate(directory: Path, keep: int) -> list[str]:
     removed: list[str] = []
     for path in files[keep:]:
         try:
+            # 只删除旧备份文件，保留 sha256 边车
             path.unlink(missing_ok=True)
-            _sidecar_path(path).unlink(missing_ok=True)
         except OSError as exc:  # pragma: no cover - 权限等
             logger.warning("清理旧备份失败 %s: %s", path, exc)
             continue
@@ -404,7 +404,7 @@ def verify_backup(app, name: str, dest_dir=None) -> dict:
 # 删除
 # ---------------------------------------------------------------------------
 def delete_backup(app, name: str, dest_dir=None) -> dict:
-    """删除备份及其 ``.sha256`` 边车。
+    """删除备份文件；保留 ``.sha256`` 边车用于校验/审计。
 
     只接受备份目录内的合法备份文件名（``../x``、绝对路径、软链越界都抛
     ``ValueError``）。文件不存在返回 ``deleted=False`` + 错误信息，不抛。
@@ -416,6 +416,7 @@ def delete_backup(app, name: str, dest_dir=None) -> dict:
         "deleted": False,
         "bytes": 0,
         "sidecar_deleted": False,
+        "sidecar_kept": True,
         "errors": [],
     }
     if not path.is_file():
@@ -430,13 +431,9 @@ def delete_backup(app, name: str, dest_dir=None) -> dict:
     except OSError as exc:
         result["errors"].append(f"删除备份失败: {exc}")
         return result
-    try:
-        if sidecar.is_file():
-            sidecar.unlink()
-            result["sidecar_deleted"] = True
-    except OSError as exc:  # pragma: no cover - 极端权限
-        result["errors"].append(f"删除 sha256 边车失败: {exc}")
-    logger.info("删除备份 %s（%s 字节）", name, result["bytes"])
+    # 保留 sidecar（sha256 校验文件），不随备份文件一起删除。
+    result["sidecar_kept"] = sidecar.is_file()
+    logger.info("删除备份 %s（%s 字节，保留 sha256 边车）", name, result["bytes"])
     return result
 
 

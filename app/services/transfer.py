@@ -743,6 +743,7 @@ def run_transfer(
     chunk_size = _chunk_size(app)
     done_bytes = 0
     current_rel = ""
+    last_progress_commit = 0.0
 
     try:
         # 源计划全部通过校验后才真正创建缺失的目标目录（越界路径上面已经拒绝）
@@ -757,7 +758,19 @@ def run_transfer(
             transfer.current_file = item.rel  # 内存中先标记，失败时 _fail 落库
 
             def _on_chunk(written: int, _item=item, _base=done_bytes) -> None:
-                _emit_progress(progress, _base + written, _item.rel)
+                nonlocal last_progress_commit
+                total_done = _base + written
+                _emit_progress(progress, total_done, _item.rel)
+                # 大文件复制时也把进度落库，文件页面才能显示连续百分比和 ETA。
+                now_mono = time.monotonic()
+                if now_mono - last_progress_commit >= 1.0:
+                    try:
+                        transfer.done_bytes = total_done
+                        transfer.current_file = _item.rel
+                        db.session.commit()
+                        last_progress_commit = now_mono
+                    except Exception:  # noqa: BLE001 - 进度落库失败不影响实际复制
+                        db.session.rollback()
 
             written = _copy_file(item.src, item.dst, chunk_size, _on_chunk)
             done_bytes += written

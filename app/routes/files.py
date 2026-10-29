@@ -158,25 +158,44 @@ def api_transfer():
 
 @bp.route("/api/files/transfers")
 def api_transfers():
-    from app.models import Transfer
+    from app.models import Transfer, utcnow
 
     rows = Transfer.query.order_by(Transfer.id.desc()).limit(50).all()
-    return jsonify(
-        {
-            "transfers": [
-                {
-                    "id": t.id,
-                    "direction": t.direction,
-                    "move": t.move,
-                    "status": t.status,
-                    "file_count": t.file_count,
-                    "total_bytes": t.total_bytes,
-                    "done_bytes": t.done_bytes,
-                    "current_file": t.current_file,
-                    "error": t.error,
-                    "created_at": t.created_at.isoformat() if t.created_at else None,
-                }
-                for t in rows
-            ]
-        }
-    )
+    now = utcnow()
+    transfers = []
+    for t in rows:
+        total = int(t.total_bytes or 0)
+        done = int(t.done_bytes or 0)
+        pct = (100.0 * done / total) if total > 0 else (100.0 if t.status == "done" else 0.0)
+        pct = max(0.0, min(100.0, pct))
+        elapsed_s = None
+        eta_s = None
+        if t.started_at is not None:
+            try:
+                elapsed_s = max(0.0, (now - t.started_at).total_seconds())
+            except TypeError:
+                elapsed_s = None
+        if t.status == "running" and elapsed_s and done > 0 and total > done:
+            rate = done / elapsed_s
+            if rate > 0:
+                eta_s = (total - done) / rate
+        elif t.status == "done":
+            eta_s = 0.0
+        transfers.append({
+            "id": t.id,
+            "direction": t.direction,
+            "move": t.move,
+            "status": t.status,
+            "file_count": t.file_count,
+            "total_bytes": total,
+            "done_bytes": done,
+            "percent": round(pct, 1),
+            "elapsed_s": round(elapsed_s, 1) if elapsed_s is not None else None,
+            "eta_s": round(eta_s, 1) if eta_s is not None else None,
+            "current_file": t.current_file,
+            "error": t.error,
+            "created_at": t.created_at.isoformat() if t.created_at else None,
+            "started_at": t.started_at.isoformat() if t.started_at else None,
+            "finished_at": t.finished_at.isoformat() if t.finished_at else None,
+        })
+    return jsonify({"transfers": transfers})

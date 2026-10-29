@@ -166,8 +166,8 @@ def _rotate_full(directory: Path, keep: int) -> list[str]:
     removed = []
     for path in files[keep:]:
         try:
+            # 只清理旧的备份文件；.sha256 边车保留，供校验/审计使用
             path.unlink(missing_ok=True)
-            _sidecar(path).unlink(missing_ok=True)
             removed.append(path.name)
         except OSError as exc:
             logger.warning("清理完整备份失败 %s: %s", path, exc)
@@ -224,8 +224,8 @@ def delete_full_backup(app, name: str, dest_dir=None) -> dict:
         return {"ok": False, "error": "备份不存在"}
     size = path.stat().st_size
     path.unlink()
-    _sidecar(path).unlink(missing_ok=True)
-    return {"ok": True, "name": name, "bytes": size}
+    # sha256 边车不删除：它是备份的校验/审计记录，保留下来。
+    return {"ok": True, "name": name, "bytes": size, "sidecar_kept": True}
 
 
 def verify_full_backup(app, name: str, dest_dir=None) -> dict:

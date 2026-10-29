@@ -62,9 +62,37 @@ const state = { container: { path: '', entries: [], selected: new Set() }, tape:
 
 function fmt(bytes) {
   if (!bytes) return '';
-  const u = ['B','KB','MB','GB','TB']; let i = 0; let n = bytes;
+  const u = ['B','KB','MB','GB','TB']; let i = 0; let n = Number(bytes);
   while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
   return n.toFixed(1) + u[i];
+}
+
+function fmtDuration(seconds) {
+  if (seconds == null || !isFinite(seconds) || seconds < 0) return '—';
+  seconds = Math.round(seconds);
+  if (seconds < 60) return seconds + ' 秒';
+  const minutes = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  if (minutes < 60) return minutes + ' 分 ' + secs + ' 秒';
+  const hours = Math.floor(minutes / 60);
+  return hours + ' 小时 ' + (minutes % 60) + ' 分';
+}
+
+function transferPercent(t) {
+  let pct = t.percent != null ? Number(t.percent) : null;
+  if (pct == null || !isFinite(pct)) {
+    const total = Number(t.total_bytes) || 0;
+    pct = total > 0 ? (Number(t.done_bytes) || 0) * 100 / total : (t.status === 'done' ? 100 : 0);
+  }
+  return Math.max(0, Math.min(100, pct));
+}
+
+function transferEta(t) {
+  if (t.status === 'done') return '已完成';
+  if (t.status === 'failed' || t.status === 'cancelled') return '—';
+  if (t.status === 'pending') return '等待中';
+  if (t.eta_s == null) return '计算中…';
+  return fmtDuration(t.eta_s);
 }
 
 function setPaneMessage(side, html) {
@@ -135,7 +163,7 @@ async function submitTransfer() {
   const data = await r.json();
   if (!r.ok) { await avlib.alert(data.error || '提交失败', '提交失败'); return; }
   await avlib.alert('已入队 job #' + data.job_id, '任务已入队');
-  loadTransfers(); setInterval(loadTransfers, 3000);
+  loadTransfers();
 }
 
 async function loadTransfers() {
@@ -143,9 +171,21 @@ async function loadTransfers() {
   const data = await r.json();
   const el = document.getElementById('transfers');
   if (!data.transfers || !data.transfers.length) { el.innerHTML = '<p class="muted">暂无</p>'; return; }
-  el.innerHTML = '<table class="data"><tr><th>#</th><th>方向</th><th>状态</th><th>进度</th><th>当前文件</th></tr>' +
-    data.transfers.map(t => `<tr><td>${t.id}</td><td>${t.direction}${t.move ? ' (移动)' : ''}</td><td>${t.status}</td>
-      <td>${fmt(t.done_bytes)} / ${fmt(t.total_bytes)}</td><td class="muted">${(t.current_file || '').slice(-70)}</td></tr>`).join('') +
+  el.innerHTML = '<table class="data"><tr><th>#</th><th>方向</th><th>状态</th><th>进度</th><th>预计完成时间</th><th>当前文件</th></tr>' +
+    data.transfers.map(t => {
+      const pct = transferPercent(t);
+      const done = fmt(t.done_bytes) || '0 B';
+      const total = fmt(t.total_bytes) || '0 B';
+      return `<tr><td>${t.id}</td><td>${t.direction}${t.move ? ' (移动)' : ''}</td><td>${t.status}</td>
+      <td class="transfer-progress-cell">
+        <div class="transfer-progress">
+          <div class="transfer-progress-track"><span class="transfer-progress-fill" style="width:${pct.toFixed(1)}%"></span></div>
+          <div class="transfer-progress-meta"><b>${pct.toFixed(1)}%</b><span>${done} / ${total}</span></div>
+        </div>
+      </td>
+      <td class="transfer-eta">${transferEta(t)}</td>
+      <td class="muted">${(t.current_file || '').slice(-70)}</td></tr>`;
+    }).join('') +
     '</table>';
 }
 
@@ -182,6 +222,7 @@ document.addEventListener('DOMContentLoaded', function () {
   refreshTape();
   setInterval(refreshTape, 8000);
   loadTransfers();
+  setInterval(loadTransfers, 2000);
 });
 </script>
 {% endblock %}

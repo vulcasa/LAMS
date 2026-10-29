@@ -24,6 +24,25 @@
   <h2>待确认分组
     <span class="muted">（第 {{ page }} / {{ pages }} 页，显示 {{ groups|length }} 组 / 共 {{ summary.pending_groups }} 组）</span>
   </h2>
+  <form class="form-row review-filter-row" method="get" action="{{ url_for('review.page') }}">
+    <label for="review-confidence">置信度</label>
+    <select id="review-confidence" name="confidence" style="width:auto">
+      {% for value, label in confidence_options %}
+      <option value="{{ value }}" {{ 'selected' if value == confidence }}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <label for="review-volume">所在卷</label>
+    <select id="review-volume" name="volume" style="width:auto">
+      <option value="">全部卷</option>
+      {% for v in volume_options %}
+      <option value="{{ v.id }}" {{ 'selected' if v.id|string == volume }}>{{ v.label }}</option>
+      {% endfor %}
+    </select>
+    <input type="hidden" name="limit" value="{{ limit }}">
+    <button class="btn primary" type="submit">筛选</button>
+    <a class="btn" href="{{ url_for('review.page') }}">清除</a>
+    {% if confidence or volume %}<span class="muted">已筛选</span>{% endif %}
+  </form>
   {% if groups %}
   <table class="data">
     <tr class="batch-row">

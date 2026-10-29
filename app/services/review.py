@@ -49,6 +49,7 @@ __all__ = [
     "ReviewStats",
     "pending_items",
     "pending_summary",
+    "pending_volumes",
     "assign_code",
     "reassign_files",
 ]
@@ -105,11 +106,17 @@ def _conf(value) -> int:
 
 
 def _within_window(confidence, *, min_confidence: int, max_confidence: int,
-                   auto_min: int) -> bool:
-    """待确认文件的置信度窗口：低置信度受 max 限制，自动未命中项始终保留。"""
+                   auto_min: int, strict: bool = False) -> bool:
+    """待确认文件的置信度窗口。
+
+    ``strict=True`` 时是纯区间过滤，用于页面上的“置信度”筛选；
+    默认模式保留自动未命中项（confidence >= auto_min），避免人工兜底入口丢项。
+    """
     conf = _conf(confidence)
     if conf < min_confidence:
         return False
+    if strict:
+        return conf <= max_confidence
     return conf <= max_confidence or conf >= auto_min
 
 
@@ -126,7 +133,9 @@ def _volume_label(volume: LibraryVolume | None) -> str:
 
 def pending_items(app, *, limit: int = 200, offset: int = 0,
                   min_confidence: int = 0,
-                  max_confidence: int = 89) -> list[PendingGroup]:
+                  max_confidence: int = 89,
+                  confidence_strict: bool = False,
+                  volume_id: int | None = None) -> list[PendingGroup]:
     """待确认列表：未关联文件按原始 ``code_guess`` 分组。
 
     * 只取 ``deleted_at IS NULL``、``is_sidecar=False``、``title_id IS NULL`` 的文件；
@@ -148,6 +157,8 @@ def pending_items(app, *, limit: int = 200, offset: int = 0,
         .order_by(LibraryFile.id)
         .all()
     )
+    if volume_id is not None:
+        rows = [(f, v) for f, v in rows if (v.id if v is not None else None) == volume_id]
 
     aliases = {row.raw_key: row.code for row in CodeAlias.query.all()}
     grouped: dict[str | None, dict] = {}
@@ -157,6 +168,7 @@ def pending_items(app, *, limit: int = 200, offset: int = 0,
             min_confidence=min_confidence,
             max_confidence=max_confidence,
             auto_min=auto_min,
+            strict=confidence_strict,
         ):
             continue
         code = (library_file.code_guess or "").strip() or None
@@ -215,13 +227,35 @@ def pending_items(app, *, limit: int = 200, offset: int = 0,
     return groups[start:start + max(1, int(limit))]
 
 
+def pending_volumes(app) -> list[dict]:
+    """列出有未关联文件的卷，供“所在卷”筛选使用。"""
+    rows = (
+        db.session.query(LibraryVolume)
+        .join(LibraryFile, LibraryFile.volume_id == LibraryVolume.id)
+        .filter(
+            LibraryFile.deleted_at.is_(None),
+            LibraryFile.is_sidecar.is_(False),
+            LibraryFile.title_id.is_(None),
+        )
+        .all()
+    )
+    seen: dict[int, dict] = {}
+    for volume in rows:
+        if volume.id not in seen:
+            seen[volume.id] = {"id": volume.id, "label": _volume_label(volume)}
+    return sorted(seen.values(), key=lambda item: item["label"])
+
+
 def pending_summary(app, *, min_confidence: int = 0,
-                    max_confidence: int = 89) -> ReviewStats:
+                    max_confidence: int = 89,
+                    confidence_strict: bool = False,
+                    volume_id: int | None = None) -> ReviewStats:
     """待确认总览（不受 limit 影响）。"""
     auto_min = int(app.config.get("CODE_AUTO_MIN", 90))
     rows = (
         db.session.query(
-            LibraryFile.confidence, LibraryFile.code_guess, LibraryFile.rel_path
+            LibraryFile.confidence, LibraryFile.code_guess, LibraryFile.rel_path,
+            LibraryFile.volume_id,
         )
         .filter(
             LibraryFile.deleted_at.is_(None),
@@ -232,9 +266,12 @@ def pending_summary(app, *, min_confidence: int = 0,
     )
     stats = ReviewStats()
     groups: set[tuple[str, str]] = set()
-    for confidence, code_guess, rel_path in rows:
+    for confidence, code_guess, rel_path, row_volume_id in rows:
+        if volume_id is not None and row_volume_id != volume_id:
+            continue
         if not _within_window(confidence, min_confidence=min_confidence,
-                              max_confidence=max_confidence, auto_min=auto_min):
+                              max_confidence=max_confidence, auto_min=auto_min,
+                              strict=confidence_strict):
             continue
         stats.pending_files += 1
         code = (code_guess or "").strip()

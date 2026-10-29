@@ -342,7 +342,7 @@ def _finish_operation(
 
 
 def _cleanup_tape(adapter: TapeAdapter) -> str:
-    """防串盘失败时尽力卸载 + 弹出；返回问题描述（空串 = 干净退出）。"""
+    """防串盘失败/初始化后校验失败时只卸载，绝不自动弹出。返回问题描述。"""
     problems: list[str] = []
     try:
         ok, message = adapter.unmount()
@@ -350,12 +350,6 @@ def _cleanup_tape(adapter: TapeAdapter) -> str:
             problems.append(f"卸载失败（{message}）")
     except Exception as exc:  # pragma: no cover - 适配器不应抛
         problems.append(f"卸载异常（{type(exc).__name__}: {exc}）")
-    try:
-        ok, message = adapter.eject()
-        if not ok:
-            problems.append(f"弹出失败（{message}）")
-    except Exception as exc:  # pragma: no cover
-        problems.append(f"弹出异常（{type(exc).__name__}: {exc}）")
     return "；".join(problems)
 
 
@@ -558,7 +552,7 @@ def mount_tape(
             # --- 防串盘：条码不可用 / 与预期不符 → 退出磁带并记 failed ------
             if not barcode_is_usable(actual_n):
                 problems = _cleanup_tape(tape_adapter)
-                detail = f"实际条码不可用（{actual_n or '空'}）：已卸载并弹出，拒绝登记"
+                detail = f"实际条码不可用（{actual_n or '空'}）：已卸载，未自动弹出，拒绝登记"
                 if problems:
                     detail += f"；{problems}"
                 _finish_operation(
@@ -579,7 +573,7 @@ def mount_tape(
                 }
             if expected is not None and not barcode_matches(actual_n, expected):
                 problems = _cleanup_tape(tape_adapter)
-                detail = f"条码不符：预期 {expected}，实际 {actual_n}；已卸载并弹出"
+                detail = f"条码不符：预期 {expected}，实际 {actual_n}；已卸载（未自动弹出）"
                 if problems:
                     detail += f"；{problems}"
                 _finish_operation(

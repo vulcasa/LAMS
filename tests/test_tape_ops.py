@@ -418,10 +418,9 @@ def test_mount_tape_without_expected_uses_actual_barcode(app, tools):
     assert volume("FB2186").status == "mounted"
 
 
-def test_mount_tape_barcode_mismatch_aborts_and_ejects(app, tools):
+def test_mount_tape_barcode_mismatch_unmounts_without_eject(app, tools):
     tools.mount_ok("FB1186")
     tools.umount_ok()
-    tools.eject_ok()
     make_volume("FB9999", status="mounted")
     adapter = make_adapter(app, tools)
 
@@ -430,11 +429,11 @@ def test_mount_tape_barcode_mismatch_aborts_and_ejects(app, tools):
     assert result["ok"] is False
     assert "条码不符" in result["message"]
     assert "FB9999" in result["message"] and "FB1186" in result["message"]
-    # 先卸载再弹出，且实际盘没有登记成卷
+    # 只卸载，绝不自动弹出；实际盘没有登记成卷
     calls = tools.calls()
     assert calls[0].startswith("ltfs ")
     assert calls[1].startswith("umount ")
-    assert calls[2].startswith("ltfs ") and "release_device" in calls[2]
+    assert not any("release_device" in line for line in calls)
     assert volume("FB9999").status == "unknown"
     assert "条码不符" in (volume("FB9999").last_error or "")
     assert mounted_volumes() == []
@@ -443,19 +442,18 @@ def test_mount_tape_barcode_mismatch_aborts_and_ejects(app, tools):
     assert "条码不符" in (operation.message or "")
 
 
-def test_mount_tape_unknown_barcode_aborts_and_ejects(app, tools):
+def test_mount_tape_unknown_barcode_unmounts_without_eject(app, tools):
     tools.configure("mount", out="mounted but no barcode\n")  # 解析不出条码 → UNKNOWN
     tools.mounted_path = os.path.realpath(str(tools.mount_point))
     tools.umount_ok()
-    tools.eject_ok()
     adapter = make_adapter(app, tools)
 
     result = mount_tape(app, adapter=adapter)
 
     assert result["ok"] is False
     assert "实际条码不可用" in result["message"]
-    assert [line.split()[0] for line in tools.calls()] == ["ltfs", "umount", "ltfs"]
-    assert "release_device" in tools.calls()[-1]
+    assert [line.split()[0] for line in tools.calls()] == ["ltfs", "umount"]
+    assert not any("release_device" in line for line in tools.calls())
     assert LibraryVolume.query.filter_by(kind="tape").count() == 0
     assert latest_op().status == "failed"
 

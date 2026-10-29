@@ -26,6 +26,7 @@ from app.services.review import (
     assign_code,
     pending_items,
     pending_summary,
+    pending_volumes,
     reassign_files,
 )
 
@@ -57,6 +58,29 @@ def _int_arg(name: str, default: int) -> int:
     return default if value is None else int(value)
 
 
+def _confidence_band(app, name: str | None) -> tuple[int, int, bool, str]:
+    """页面置信度筛选 → (min, max, strict, normalized_name)。
+
+    空值/all 保持原兜底语义：低置信度 + 自动未命中；
+    其它区间使用严格区间，避免“90+”混入低置信度。
+    """
+    name = (name or "").strip()
+    auto_min = int(app.config.get("CODE_AUTO_MIN", 90) or 90)
+    bands = {
+        "": (0, auto_min - 1, False, ""),
+        "all": (0, auto_min - 1, False, "all"),
+        "low": (0, auto_min - 1, True, "low"),
+        "0-59": (0, 59, True, "0-59"),
+        "60-69": (60, 69, True, "60-69"),
+        "70-79": (70, 79, True, "70-79"),
+        "80-89": (80, auto_min - 1, True, "80-89"),
+        "90+": (auto_min, 100, True, "90+"),
+    }
+    if name not in bands:
+        return bands[""]
+    return bands[name]
+
+
 # ---------------------------------------------------------------------------
 # 页面
 # ---------------------------------------------------------------------------
@@ -65,14 +89,30 @@ def page():
     limit = _limit_arg()
     page_no = max(1, _int_arg("page", 1))
     app = _app()
-    summary = pending_summary(app)
+    min_conf, max_conf, conf_strict, confidence = _confidence_band(
+        app, request.args.get("confidence")
+    )
+    volume_raw = (request.args.get("volume") or "").strip()
+    volume_id = int(volume_raw) if volume_raw.isdigit() else None
+    summary = pending_summary(
+        app, min_confidence=min_conf, max_confidence=max_conf,
+        confidence_strict=conf_strict, volume_id=volume_id,
+    )
     offset = (page_no - 1) * limit
-    groups = pending_items(app, limit=limit, offset=offset)
+    groups = pending_items(
+        app, limit=limit, offset=offset,
+        min_confidence=min_conf, max_confidence=max_conf,
+        confidence_strict=conf_strict, volume_id=volume_id,
+    )
     pages = max(1, math.ceil(summary.pending_groups / max(1, limit))) if summary.pending_groups else 1
     page_no = min(page_no, pages)
     if page_no != (offset // max(1, limit) + 1):
         offset = (page_no - 1) * limit
-        groups = pending_items(app, limit=limit, offset=offset)
+        groups = pending_items(
+            app, limit=limit, offset=offset,
+            min_confidence=min_conf, max_confidence=max_conf,
+            confidence_strict=conf_strict, volume_id=volume_id,
+        )
 
     def page_url(pno):
         args = request.args.to_dict()
@@ -114,6 +154,18 @@ def page():
         args=request.args,
         title_options=title_options,
         file_ids_limit=FILE_IDS_LIMIT,
+        confidence=confidence,
+        volume=volume_raw if volume_id is not None else "",
+        volume_options=pending_volumes(app),
+        confidence_options=[
+            ("", "全部置信度"),
+            ("low", "低置信度（低于自动阈值）"),
+            ("0-59", "0–59"),
+            ("60-69", "60–69"),
+            ("70-79", "70–79"),
+            ("80-89", "80–89"),
+            ("90+", "90 以上"),
+        ],
     )
 
 
@@ -124,15 +176,24 @@ def page():
 def api_pending():
     app = _app()
     limit = _limit_arg()
-    min_confidence = _int_arg("min_confidence", 0)
-    max_confidence = _int_arg("max_confidence", 89)
+    confidence_arg = request.args.get("confidence")
+    if confidence_arg is not None:
+        min_confidence, max_confidence, conf_strict, _ = _confidence_band(app, confidence_arg)
+    else:
+        min_confidence = _int_arg("min_confidence", 0)
+        max_confidence = _int_arg("max_confidence", 89)
+        conf_strict = False
+    volume_raw = (request.args.get("volume") or "").strip()
+    volume_id = int(volume_raw) if volume_raw.isdigit() else None
     offset = max(0, _int_arg("offset", 0))
     groups = pending_items(
         app, limit=limit, offset=offset, min_confidence=min_confidence,
-        max_confidence=max_confidence,
+        max_confidence=max_confidence, confidence_strict=conf_strict,
+        volume_id=volume_id,
     )
     summary = pending_summary(
         app, min_confidence=min_confidence, max_confidence=max_confidence,
+        confidence_strict=conf_strict, volume_id=volume_id,
     )
     return jsonify({
         "groups": [group.to_dict() for group in groups],

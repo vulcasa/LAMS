@@ -510,3 +510,30 @@ def test_manual_code_creates_stub_for_dump_miss(app):
         db.session.refresh(item)
         assert outcome.stubbed is True
         assert item.title_id is not None
+
+
+def test_pending_groups_strict_confidence_and_volume_filter(app):
+    with app.app_context():
+        nas = _volume("nas", "/mnt/nas")
+        tape = _volume("tape", "LTO6-0002")
+        _file(nas, "LOW-001", confidence=45)
+        _file(nas, "MID-001", confidence=75)
+        _file(tape, "HIGH-001", confidence=95)
+        db.session.commit()
+
+        low = review_service.pending_items(
+            app, min_confidence=0, max_confidence=89, confidence_strict=True
+        )
+        assert [g.code_guess for g in low] == ["LOW-001", "MID-001"]
+
+        only_tape = review_service.pending_items(app, volume_id=tape.id)
+        assert [g.code_guess for g in only_tape] == ["HIGH-001"]
+
+        stats = review_service.pending_summary(
+            app, min_confidence=0, max_confidence=89, confidence_strict=True,
+            volume_id=nas.id,
+        )
+        assert stats.pending_files == 2
+        assert stats.pending_groups == 2
+        labels = [v["label"] for v in review_service.pending_volumes(app)]
+        assert "NAS /mnt/nas" in labels

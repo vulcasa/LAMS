@@ -89,3 +89,23 @@ def test_restore_full_backup_restores_database_and_assets(tmp_path):
     assert value == "完整备份测试"
     assert (tmp_path / "media" / "covers" / "FULL-001.jpg").read_bytes() == b"cover"
     assert (tmp_path / "media" / "screenshots" / "FULL-001" / "01.jpg").read_bytes() == b"frame"
+
+
+def test_delete_full_backup_removes_file_only_and_keeps_database_records(tmp_path):
+    from app.services.full_backup import delete_full_backup
+
+    app = _app(tmp_path)
+    _seed(app, tmp_path)
+    result = create_full_backup(app, keep=2)
+    path = Path(result["path"])
+    sidecar = Path(str(path) + ".sha256")
+    assert path.is_file() and sidecar.is_file()
+
+    with app.app_context():
+        assert Title.query.count() == 1
+        deleted = delete_full_backup(app, result["name"])
+        assert deleted["ok"] is True
+        # 只删备份文件，sha256 边车和数据库里的片库记录仍然存在
+        assert not path.exists()
+        assert sidecar.is_file()
+        assert Title.query.filter_by(dvd_id="FULL-001").count() == 1

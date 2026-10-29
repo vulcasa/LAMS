@@ -614,8 +614,8 @@ select {
 
 /* 挂载进行中：按钮旋转圈 + 弹窗锁页 */
 body.modal-frozen { overflow: hidden; }
-#tapeMountBtn { min-width: 112px; }
-#tapeMountBtn.is-busy { pointer-events: none; }
+.tape-action-btn { min-width: 58px; }
+.tape-action-btn.is-busy { min-width: 58px; pointer-events: none; }
 .btn-spinner {
   width: 18px; height: 18px; display: inline-block;
   border: 2px solid rgba(255, 255, 255, .35);
@@ -625,3 +625,27 @@ body.modal-frozen { overflow: hidden; }
 }
 @keyframes tape-spin { to { transform: rotate(360deg); } }
 #tapeModalClose[hidden] { display: none !important; }
+
+
+/* 文件传输进度 */
+.transfer-progress-cell { min-width: 190px; }
+.transfer-progress { min-width: 170px; }
+.transfer-progress-track {
+  height: 8px; border-radius: 999px; overflow: hidden;
+  background: rgba(255, 255, 255, .09);
+}
+.transfer-progress-fill {
+  display: block; height: 100%; border-radius: 999px;
+  background: var(--accent2); transition: width .35s ease;
+}
+.transfer-progress-meta {
+  display: flex; align-items: baseline; gap: 8px;
+  margin-top: 5px; color: var(--muted); font-size: 12px;
+}
+.transfer-progress-meta b { color: var(--fg); font-weight: 600; }
+.transfer-eta { color: var(--muted); white-space: nowrap; font-size: 12.5px; }
+
+
+/* 待确认筛选 */
+.review-filter-row { margin: 0 0 12px; }
+.review-filter-row select { min-width: 150px; }

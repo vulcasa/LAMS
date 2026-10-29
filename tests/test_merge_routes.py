@@ -203,3 +203,25 @@ def test_manual_eject_is_not_blocked_by_auto_eject_config(app):
         result = eject_tape(app, adapter=DummyAdapter())
     assert result["ok"] is True
     assert "成功" in result["message"]
+
+
+def test_files_transfer_progress_percent_and_eta(app, client):
+    from datetime import timedelta
+    from app.models import Transfer, utcnow
+
+    with app.app_context():
+        db.session.add(Transfer(
+            direction="container_to_tape", move=False, target_dir="/tape",
+            status="running", file_count=1,
+            total_bytes=100 * 1024 * 1024, done_bytes=25 * 1024 * 1024,
+            current_file="TEST-001.mp4",
+            created_at=utcnow() - timedelta(seconds=20),
+            started_at=utcnow() - timedelta(seconds=20),
+        ))
+        db.session.commit()
+
+    data = client.get("/api/files/transfers").get_json()
+    row = data["transfers"][0]
+    assert row["percent"] == 25.0
+    assert row["eta_s"] is not None and row["eta_s"] > 0
+    assert row["elapsed_s"] >= 19
