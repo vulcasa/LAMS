@@ -26,6 +26,7 @@ INCLUDE = [
     "requirements.txt",
     "requirements-prod.txt",
     "README.md",
+    "VERSION",
 ]
 EXCLUDE_DIRS = {
     "__pycache__",

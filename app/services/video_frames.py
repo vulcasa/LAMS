@@ -14,10 +14,10 @@ import subprocess
 from pathlib import Path
 
 from app.db import db
-from app.models import Asset, LibraryFile, Title, utcnow
+from app.models import Asset, FrameFailure, LibraryFile, Title, utcnow
 
 __all__ = [
-    "ffmpeg_available", "find_video_file", "find_video_files",
+    "ffmpeg_available", "find_video_file", "find_video_files", "find_video_entries",
     "titles_missing_screenshots", "extract_frames", "frame_count_setting",
     "frame_width_setting", "frame_timestamps",
 ]
@@ -84,8 +84,11 @@ def frame_timestamps(
     return [max(0.0, span * (index + 0.5) / count) for index in range(count)]
 
 
-def find_video_files(app, title: Title) -> list[Path]:
-    """找该 Title 当前可访问的所有视频文件（按入库顺序；磁带需挂载）。"""
+def find_video_entries(app, title: Title) -> list[tuple[LibraryFile, Path]]:
+    """找该 Title 当前可访问的视频文件（按入库顺序；磁带需挂载）。
+
+    返回 ``(LibraryFile, path)``；已在 frame_failure 标记的文件会被跳过。
+    """
     from app.config import Config
 
     mount = Path(app.config.get("LTFS_MOUNT", Config.LTFS_MOUNT))
@@ -95,7 +98,7 @@ def find_video_files(app, title: Title) -> list[Path]:
         .order_by(LibraryFile.id)
         .all()
     )
-    candidates: list[Path] = []
+    candidates: list[tuple[LibraryFile, Path]] = []
     for row in rows:
         suffix = Path(row.rel_path).suffix.lower()
         if suffix not in _VIDEO_EXTS:
@@ -104,17 +107,30 @@ def find_video_files(app, title: Title) -> list[Path]:
         if volume is None:
             continue
         if (volume.kind or "") == "tape":
-            candidates.append(mount / row.rel_path)
+            candidates.append((row, mount / row.rel_path))
         elif volume.ref:
-            candidates.append(Path(volume.ref) / row.rel_path)
-    found: list[Path] = []
-    for path in candidates:
+            candidates.append((row, Path(volume.ref) / row.rel_path))
+    failed_ids = {
+        int(value)
+        for (value,) in db.session.query(FrameFailure.file_id)
+        .filter(FrameFailure.file_id.in_([row.id for row, _path in candidates]))
+        .all()
+    } if candidates else set()
+    found: list[tuple[LibraryFile, Path]] = []
+    for row, path in candidates:
+        if int(row.id) in failed_ids:
+            continue
         try:
             if path.is_file():
-                found.append(path)
+                found.append((row, path))
         except OSError:
             continue
     return found
+
+
+def find_video_files(app, title: Title) -> list[Path]:
+    """该 Title 当前可访问的视频路径（不含已标记失败的文件）。"""
+    return [path for _row, path in find_video_entries(app, title)]
 
 
 def find_video_file(app, title: Title) -> Path | None:
@@ -126,7 +142,7 @@ def titles_missing_screenshots(app, limit: int = 50) -> list[Title]:
     """需要生成视频截图的标题：有非磁带视频文件，且还没有 screenshot。"""
     from sqlalchemy import exists, or_
 
-    from app.models import LibraryVolume
+    from app.models import FrameFailure, LibraryVolume
 
     video_filter = or_(
         *[LibraryFile.name.ilike(f"%{ext}") for ext in sorted(_VIDEO_EXTS)]
@@ -144,6 +160,7 @@ def titles_missing_screenshots(app, limit: int = 50) -> list[Title]:
             LibraryFile.is_sidecar.is_(False),
             video_filter,
             ~screenshot_exists,
+            ~exists().where(FrameFailure.file_id == LibraryFile.id),
         )
         .distinct()
         .order_by(Title.id)
@@ -220,31 +237,31 @@ def extract_frames(
     if not ffmpeg_available():
         stats["errors"].append("ffmpeg 未安装")
         return stats
-    videos = find_video_files(app, title)
-    if not videos:
-        stats["errors"].append("当前没有可访问的视频文件（磁带需先挂载）")
+    entries = find_video_entries(app, title)
+    if not entries:
+        stats["errors"].append("当前没有可访问的视频文件（磁带需先挂载，或文件已标记抽帧失败）")
         return stats
     # 预留功能只在 NAS/本地文件上启用：LTO 上逐帧 seek 极慢，容易长时间占用磁带
     try:
         from app.config import Config
 
         mount = Path(app.config.get("LTFS_MOUNT", Config.LTFS_MOUNT)).resolve()
-        videos = [
-            video for video in videos
+        entries = [
+            (row, video) for row, video in entries
             if allow_tape
             or (Path(video).resolve() != mount and mount not in Path(video).resolve().parents)
         ]
     except OSError:
         pass
-    if not videos:
+    if not entries:
         stats["errors"].append("磁带上的视频抽帧过慢，暂不启用；请先复制到 NAS 再扫描")
         return stats
 
     count = frame_count_setting(app, count)
     output_width = frame_width_setting(app, width)
-    total_planned = count * len(videos)
+    total_planned = count * len(entries)
     stats["count"] = count
-    stats["files"] = len(videos)
+    stats["files"] = len(entries)
     stats["frames_per_file"] = count
     stats["total_planned"] = total_planned
     stats["width"] = output_width
@@ -257,6 +274,7 @@ def extract_frames(
     out_dir = Path(app.config["MEDIA_DIR"]) / "screenshots" / _safe_stem(title.dvd_id)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    failed_files: dict[int, str] = {}
     existing = {
         int(asset.idx)
         for asset in Asset.query.filter_by(title_id=title.id, kind="screenshot").all()
@@ -265,7 +283,7 @@ def extract_frames(
     idx = max(existing, default=0)
     processed = 0
     fallback = float(app.config.get("VIDEO_FALLBACK_DURATION", 7200) or 7200)
-    for file_no, video in enumerate(videos, start=1):
+    for file_no, (video_row, video) in enumerate(entries, start=1):
         duration, duration_source = resolve_duration(app, video)
         timestamps = frame_timestamps(duration, count, fallback_duration=fallback)
         if file_no == 1:
@@ -287,20 +305,22 @@ def extract_frames(
             try:
                 result = subprocess.run(command, capture_output=True, text=True, timeout=120)
             except (OSError, subprocess.SubprocessError) as exc:
-                stats["errors"].append(f"{Path(video).name}: {type(exc).__name__}: {exc}")
+                error_text = f"{Path(video).name}: {type(exc).__name__}: {exc}"
+                stats["errors"].append(error_text)
+                failed_files[int(video_row.id)] = error_text
                 if progress is not None:
                     try:
-                        progress(processed, f"文件 {file_no}/{len(videos)} · 截图 {position}/{count}")
+                        progress(processed, f"文件 {file_no}/{len(entries)} · 截图 {position}/{count}")
                     except Exception:  # noqa: BLE001
                         pass
                 continue
             if result.returncode != 0 or not target.is_file():
-                stats["errors"].append(
-                    f"{Path(video).name}: {(result.stderr or 'ffmpeg 失败').strip()[:300]}"
-                )
+                error_text = f"{Path(video).name}: {(result.stderr or 'ffmpeg 失败').strip()[:300]}"
+                stats["errors"].append(error_text)
+                failed_files[int(video_row.id)] = error_text
                 if progress is not None:
                     try:
-                        progress(processed, f"文件 {file_no}/{len(videos)} · 截图 {position}/{count}")
+                        progress(processed, f"文件 {file_no}/{len(entries)} · 截图 {position}/{count}")
                     except Exception:  # noqa: BLE001
                         pass
                 continue
@@ -314,10 +334,12 @@ def extract_frames(
                 try:
                     progress(
                         processed,
-                        f"文件 {file_no}/{len(videos)} · 截图 {position}/{count}",
+                        f"文件 {file_no}/{len(entries)} · 截图 {position}/{count}",
                     )
                 except Exception:  # noqa: BLE001
                     pass
+    if failed_files:
+        stats["failed_files"] = failed_files
     if stats["frames"]:
         stats["ok"] = True
         db.session.commit()

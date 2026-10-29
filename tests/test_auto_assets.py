@@ -174,15 +174,19 @@ def test_recover_stale_running_jobs(app):
         assert "中断" in (row.error or "")
 
 
-def test_auto_poll_does_not_jump_queue_when_other_job_pending(app):
+def test_auto_poll_queues_behind_other_job_without_jumping(app):
     from app.db import db
     from app.models import Job
     from app.services import jobs
 
+    _add_missing_title(app)
     with app.app_context():
-        db.session.add(Job(kind="materialize", payload="{}", status="pending"))
+        user_job = Job(kind="materialize", payload="{}", status="pending")
+        db.session.add(user_job)
         db.session.commit()
-        assert jobs.maybe_auto_assets(app, force=True) is None
+        auto_id = jobs.maybe_auto_assets(app, force=True)
+        assert auto_id is not None
+        assert auto_id > user_job.id
 
 
 def test_start_worker_threads_alive_and_stop(app):
@@ -207,3 +211,15 @@ def test_start_worker_threads_alive_and_stop(app):
         jobs._started = old_started
         jobs._threads = old_threads
         jobs._stop = old_stop
+
+
+def test_auto_poll_runs_alongside_frame_job(app):
+    from app.db import db
+    from app.models import Job
+    from app.services import jobs
+
+    _add_missing_title(app)
+    with app.app_context():
+        db.session.add(Job(kind="video_frames_batch", payload="{}", status="running"))
+        db.session.commit()
+        assert jobs.maybe_auto_assets(app, force=True) is not None

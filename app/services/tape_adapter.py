@@ -48,7 +48,10 @@ logger = logging.getLogger(__name__)
 # 条码不可信时的哨兵值（v1 的 _get_barcode 三级兜底失败就返回它）
 UNKNOWN_BARCODE = "UNKNOWN"
 # 认为"不可用"的条码：空 / UNKNOWN / NONE（大小写不敏感）
-_INVALID_BARCODES = {"", UNKNOWN_BARCODE, "NONE", "UNKNOWN_BARCODE"}
+_INVALID_BARCODES = {
+    "", UNKNOWN_BARCODE, "NONE", "UNKNOWN_BARCODE",
+    "MEDIUM", "PARTITIONED", "VOLUME", "TAPE", "NOT",
+}
 
 
 def normalize_barcode(value: Any) -> str | None:
@@ -133,6 +136,18 @@ class TapeAdapter:
 
     def eject(self) -> tuple[bool, str]:
         raise NotImplementedError
+
+    def initialize(self, barcode: str, *, force: bool = False) -> tuple[bool, str, str | None]:
+        """初始化空白/未格式化磁带；默认不支持。"""
+        return False, "当前适配器不支持初始化（需要 TAPE_ADAPTER=direct）", None
+
+    def recover_list(self) -> tuple[bool, str, list[dict]]:
+        """只读列出 ltfsck 可回滚点；默认不支持。"""
+        return False, "当前适配器不支持索引恢复", []
+
+    def recover_index(self, generation: str | None = None, *, deep: bool = False) -> tuple[bool, str]:
+        """执行 ltfsck 索引恢复；默认不支持。"""
+        return False, "当前适配器不支持索引恢复"
 
     def device_list(self) -> list[dict]:
         """枚举驱动器（``ltfs -o device_list`` / v1 ``/api/tape/device-list``）。
@@ -577,11 +592,17 @@ class DirectAdapter(TapeAdapter):
         app=None,
         ltfs_bin: str = "ltfs",
         umount_bin: str = "umount",
+        mkltfs_bin: str | None = None,
+        ltfsck_bin: str | None = None,
         info_timeout: float | int | str | None = None,
     ):
         super().__init__(app=app, mount_point=mount_point)
         self.device = str(device or Config.LTFS_DEVICE)
         self.timeout = _coerce_timeout(timeout if timeout is not None else Config.LTFS_TIMEOUT)
+        self.mkltfs_bin = str(mkltfs_bin or getattr(Config, "MKLTFS_BIN", "mkltfs") or "mkltfs")
+        self.ltfsck_bin = str(ltfsck_bin or getattr(Config, "LTFSCK_BIN", "ltfsck") or "ltfsck")
+        self.init_timeout = _coerce_timeout(getattr(Config, "TAPE_INIT_TIMEOUT", 600))
+        self.recover_timeout = _coerce_timeout(getattr(Config, "TAPE_RECOVER_TIMEOUT", 1800))
         # 设备信息/设备列表是"锦上添花"的查询：真机上可能卡住，给短超时，
         # 绝不能让它占着驱动器 5 分钟（页面状态只走 status()，不查详情）。
         default_info = getattr(Config, "LTFS_INFO_TIMEOUT", 15)
@@ -705,6 +726,59 @@ class DirectAdapter(TapeAdapter):
             return False, f"弹出失败：{_first_line(err) or _first_line(out)}"
         return True, "磁带弹出成功"
 
+    # --- 初始化 / 索引恢复 ---------------------------------------------
+    def initialize(self, barcode: str, *, force: bool = False) -> tuple[bool, str, str | None]:
+        if not os.path.exists(self.device):
+            return False, f"磁带设备不存在: {self.device}", None
+        barcode = str(barcode or "").strip()
+        argv = [self.mkltfs_bin, "-d", self.device, "-s", barcode, "-n", barcode]
+        if force:
+            argv.append("-f")
+        rc, out, err, timed_out = self._exec(argv, timeout=self.init_timeout)
+        self._record_output(command=" ".join(argv), stdout=out, stderr=err)
+        if timed_out:
+            return False, f"初始化超时：{_first_line(err)}", None
+        if rc != 0:
+            return False, f"初始化失败：{_first_line(err) or _first_line(out)}", None
+        return True, f"磁带初始化成功（条码 {barcode}）", barcode
+
+    def recover_list(self) -> tuple[bool, str, list[dict]]:
+        argv = [self.ltfsck_bin, "-l", self.device]
+        rc, out, err, timed_out = self._exec(argv, timeout=self.recover_timeout)
+        self._record_output(command=" ".join(argv), stdout=out, stderr=err)
+        if timed_out:
+            return False, f"读取回滚点超时：{_first_line(err)}", []
+        if rc != 0:
+            return False, f"读取回滚点失败：{_first_line(err) or _first_line(out)}", []
+        points = []
+        for line in (out or "").splitlines() + (err or "").splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            match = re.search(r"(?:generation|gen|世代)[^0-9]*(\d+)", stripped, re.I)
+            if match:
+                points.append({"generation": match.group(1), "raw": stripped})
+            elif re.match(r"^\d+\b", stripped):
+                points.append({"generation": re.match(r"^(\d+)", stripped).group(1), "raw": stripped})
+        return True, f"找到 {len(points)} 个回滚点", points
+
+    def recover_index(self, generation: str | None = None, *, deep: bool = False) -> tuple[bool, str]:
+        argv = [self.ltfsck_bin]
+        if deep:
+            argv.append("-z")
+        elif generation:
+            argv += ["-r", "-g", str(generation)]
+        else:
+            argv.append("-r")
+        argv.append(self.device)
+        rc, out, err, timed_out = self._exec(argv, timeout=self.recover_timeout)
+        self._record_output(command=" ".join(argv), stdout=out, stderr=err)
+        if timed_out:
+            return False, f"索引恢复超时：{_first_line(err)}"
+        if rc != 0:
+            return False, f"索引恢复失败：{_first_line(err) or _first_line(out)}"
+        return True, "索引恢复成功"
+
     # --- 设备信息（ltfs -o device_list / -o device_info） ---------------
     def device_list(self) -> list[dict]:
         argv = [self.ltfs_bin, "-o", "device_list"]
@@ -784,5 +858,7 @@ def get_adapter(cfg: Any = None, *, app=None) -> TapeAdapter:
             app=app,
             ltfs_bin=str(_cfg_get(cfg, "LTFS_BIN", "ltfs") or "ltfs"),
             umount_bin=str(_cfg_get(cfg, "UMOUNT_BIN", "umount") or "umount"),
+            mkltfs_bin=str(_cfg_get(cfg, "MKLTFS_BIN", "mkltfs") or "mkltfs"),
+            ltfsck_bin=str(_cfg_get(cfg, "LTFSCK_BIN", "ltfsck") or "ltfsck"),
         )
     raise ValueError(f"未知的 TAPE_ADAPTER 配置: {kind!r}（支持 http/direct）")

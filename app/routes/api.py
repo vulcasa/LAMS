@@ -73,8 +73,6 @@ def audit_tape():
         "expected_barcode": data.get("expected_barcode") or barcode,
         "write_manifest": data.get("write_manifest", True),
     }
-    if "eject" in data:
-        payload["eject"] = bool(data.get("eject"))
     job_id = jobs.enqueue("audit_tape", payload)
     return jsonify({"job_id": job_id}), 202
 

@@ -426,7 +426,7 @@ body.lightbox-open { overflow: hidden; }
 .avlib-modal-actions {
   display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px;
 }
-.avlib-modal-actions .btn { height: 34px; padding: 0 16px; border-radius: 6px; }
+.avlib-modal-actions .btn { height: 36px; padding: 0 16px; border-radius: 6px; }
 
 /* 待确认批量操作栏 */
 .batch-row td {
@@ -593,4 +593,21 @@ select {
 .task-record-table thead th {
   position: sticky; top: 0; z-index: 1;
   background: var(--bg2); border-bottom: 1px solid var(--line);
+}
+
+/* 磁带初始化/恢复弹窗 */
+.tape-modal-body { display: flex; flex-direction: column; gap: 10px; }
+.tape-modal-body p { margin: 0; line-height: 1.65; }
+.tape-modal-body .tape-warning { color: #e8a08a; }
+.tape-modal-body .tape-modal-error { color: #e08585; min-height: 18px; }
+.tape-modal-body .tape-field { display: flex; flex-direction: column; gap: 5px; color: var(--muted); font-size: 12.5px; }
+.tape-modal-body .tape-field input,
+.tape-modal-body select { width: 100%; }
+.tape-modal-body .tape-check {
+  display: flex; align-items: flex-start; gap: 8px;
+  color: var(--fg); font-size: 12.5px; line-height: 1.5; cursor: pointer;
+}
+.tape-modal-body .tape-check input[type="checkbox"] {
+  width: 16px; height: 16px; min-width: 16px; margin: 1px 0 0;
+  accent-color: var(--accent2); flex: 0 0 auto;
 }

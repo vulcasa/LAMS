@@ -110,6 +110,58 @@ def api_eject():
         return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 500
 
 
+@bp.route("/api/tape/recover/list", methods=["POST"])
+def api_recover_list():
+    try:
+        from app.services.tape_ops import recover_list_tape
+
+        return jsonify(recover_list_tape(current_app._get_current_object()))
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"ok": False, "message": f"{type(exc).__name__}: {exc}", "points": []}), 500
+
+
+@bp.route("/api/tape/recover", methods=["POST"])
+def api_recover():
+    data = request.get_json(silent=True) or {}
+    try:
+        from app.services.tape_ops import recover_tape_index
+
+        raw_generation = data.get("generation")
+        generation = str(raw_generation).strip() if raw_generation is not None else None
+        result = recover_tape_index(
+            current_app._get_current_object(),
+            generation=generation or None,
+            deep=bool(data.get("deep")),
+            confirmed=bool(data.get("confirmed")),
+        )
+        return jsonify(result), (200 if result.get("ok") else 400)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"ok": False, "message": f"{type(exc).__name__}: {exc}"}), 500
+
+
+@bp.route("/api/tape/init", methods=["POST"])
+def api_init():
+    data = request.get_json(silent=True) or {}
+    try:
+        from app.services.tape_ops import initialize_tape
+
+        raw_operation_id = data.get("mount_operation_id")
+        try:
+            mount_operation_id = int(raw_operation_id) if raw_operation_id is not None else None
+        except (TypeError, ValueError):
+            mount_operation_id = None
+        result = initialize_tape(
+            current_app._get_current_object(),
+            (data.get("barcode") or "").strip(),
+            confirmed=bool(data.get("confirmed")),
+            force=bool(data.get("force")),
+            mount_operation_id=mount_operation_id,
+        )
+        return jsonify(result), (200 if result.get("ok") else 400)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"ok": False, "message": f"{type(exc).__name__}: {exc}"}), 500
+
+
 @bp.route("/api/tape/device")
 def api_device():
     try:

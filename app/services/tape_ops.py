@@ -32,6 +32,7 @@ from __future__ import annotations
 import functools
 import logging
 import os
+import re
 from pathlib import Path
 import time
 from contextlib import nullcontext
@@ -47,18 +48,23 @@ from app.services.tape_adapter import (
     barcode_matches,
     get_adapter,
     normalize_barcode,
+    parse_barcode_from_text,
 )
 
 logger = logging.getLogger(__name__)
 
 __all__ = [
     "MAX_OUTPUT_BYTES",
+    "classify_mount_failure",
     "current_status",
     "device_snapshot",
     "eject_tape",
+    "initialize_tape",
     "list_operations",
     "list_tape_volumes",
     "mount_tape",
+    "recover_list_tape",
+    "recover_tape_index",
     "unmount_tape",
 ]
 
@@ -67,6 +73,48 @@ MAX_OUTPUT_BYTES = 8 * 1024
 _TRUNCATE_NOTICE = "\n...（输出超过 8KB，已截断）"
 
 _TAPE_KIND = "tape"
+_BARCODE_INIT_RE = re.compile(r"^[A-Za-z0-9]{6}$")
+_UNINITIALIZED_MARKERS = (
+    "not an ltfs volume",
+    "cannot read ansi label",
+    "failed to read label",
+    "unformatted cartridge",
+    "not formatted",
+    "medium is not partitioned",
+    "not partitioned",
+    "cannot read volume: medium",
+    "ltfs17168e",
+    "ltfs11170e",
+    "ltfs11174e",
+    "ltfs11175e",
+    "ltfs11176e",
+)
+
+
+def _output_text(output: dict | None) -> str:
+    if not isinstance(output, dict):
+        return ""
+    return "\n".join(
+        str(output.get(key) or "") for key in ("command", "stdout", "stderr")
+    )
+
+
+def classify_mount_failure(output: dict | None, message: str = "") -> str:
+    """把挂载失败分类：uninitialized / already_registered / unknown。
+
+    只认明确的“不是 LTFS 卷/无法读取标签”，不能把设备忙、写保护、超时误判为未初始化。
+    """
+    text = (_output_text(output) + "\n" + str(message or "")).lower()
+    if any(marker in text for marker in _UNINITIALIZED_MARKERS):
+        return "uninitialized"
+    return "unknown"
+
+
+def _normalize_init_barcode(value: str | None) -> str | None:
+    barcode = normalize_barcode(value)
+    if not barcode or not _BARCODE_INIT_RE.match(barcode):
+        return None
+    return barcode.upper()
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +217,44 @@ def _find_volume(barcode: str | None) -> LibraryVolume | None:
 
 def _mounted_volumes() -> list[LibraryVolume]:
     return LibraryVolume.query.filter_by(kind=_TAPE_KIND, status="mounted").all()
+
+
+#: 初始化只接受近期一次“未初始化挂载失败”产生的上下文，避免直接调用 API 误格式化。
+_INIT_CONTEXT_MAX_AGE = 15 * 60
+
+
+def _recent_uninitialized_mount(operation_id: int | None) -> TapeOperation | None:
+    """校验初始化上下文：必须引用近期一次 uninitialized 的 mount 失败操作。"""
+    if operation_id is None:
+        return None
+    try:
+        operation = db.session.get(TapeOperation, int(operation_id))
+    except (TypeError, ValueError):
+        return None
+    if operation is None or operation.op_type != "mount" or operation.status != "failed":
+        return None
+    # 上下文必须仍是最近一次 mount 操作，避免挂载成功后继续用旧失败上下文格式化。
+    latest_mount = (
+        TapeOperation.query.filter_by(op_type="mount")
+        .order_by(TapeOperation.id.desc()).first()
+    )
+    if latest_mount is None or latest_mount.id != operation.id:
+        return None
+    started = operation.started_at or operation.created_at
+    if started is not None:
+        try:
+            age = (utcnow() - started).total_seconds()
+        except TypeError:
+            age = 0
+        if age > _INIT_CONTEXT_MAX_AGE:
+            return None
+    output = {
+        "stdout": operation.stdout or "",
+        "stderr": operation.stderr or "",
+    }
+    if classify_mount_failure(output, operation.message or "") != "uninitialized":
+        return None
+    return operation
 
 
 def _upsert_volume(barcode: str) -> tuple[LibraryVolume, bool]:
@@ -454,12 +540,19 @@ def mount_tape(
                 volume = _find_volume(expected or actual_n)
                 if volume is not None:
                     _mark_volume_error(volume, detail)
+                detected = parse_barcode_from_text(_output_text(mount_output))
+                registered = _find_volume(detected)
+                failure_code = classify_mount_failure(mount_output, detail)
                 return {
                     "ok": False,
                     "message": detail,
                     "barcode": actual_n,
                     "operation_id": operation.id,
                     "volume": _volume_dict(volume) if volume is not None else None,
+                    "needs_init": failure_code == "uninitialized",
+                    "code": failure_code,
+                    "detected_barcode": detected,
+                    "barcode_registered": registered is not None,
                 }
 
             # --- 防串盘：条码不可用 / 与预期不符 → 退出磁带并记 failed ------
@@ -547,6 +640,222 @@ def mount_tape(
 
 
 @_serialized
+def initialize_tape(
+    app,
+    barcode: str,
+    *,
+    confirmed: bool = False,
+    force: bool = False,
+    mount_operation_id: int | None = None,
+    adapter: TapeAdapter | None = None,
+) -> dict:
+    """格式化未初始化磁带并挂载。
+
+    安全规则：
+    - 必须 confirmed=True；
+    - barcode 必须是 6 位字母/数字；
+    - 已挂载/已登记卷拒绝（force 也不能绕过已登记保护）；
+    - 只有 direct adapter 支持；
+    - 初始化成功后必须实际挂载且条码一致才登记。
+    """
+    started = time.monotonic()
+    operation: TapeOperation | None = None
+    try:
+        with _maybe_app_context(app):
+            if not confirmed:
+                return {"ok": False, "code": "not_confirmed",
+                        "message": "必须明确确认格式化操作"}
+            barcode_n = _normalize_init_barcode(barcode)
+            if barcode_n is None:
+                return {"ok": False, "code": "invalid_barcode",
+                        "message": "条码必须是 6 位字母或数字"}
+            context = _recent_uninitialized_mount(mount_operation_id)
+            if context is None:
+                return {"ok": False, "code": "missing_mount_context",
+                        "message": "初始化必须基于近期一次“磁带回读失败/未初始化”的挂载结果"}
+            tape_adapter = _adapter(app, adapter)
+            try:
+                is_mounted = tape_adapter.status().mounted or os.path.ismount(tape_adapter.mount_point)
+            except OSError:
+                is_mounted = True
+            if is_mounted:
+                return {"ok": False, "code": "already_mounted",
+                        "message": "当前磁带已挂载，不能执行初始化"}
+            if _find_volume(barcode_n) is not None:
+                return {"ok": False, "code": "already_registered",
+                        "message": f"条码 {barcode_n} 已在库中登记，禁止格式化"}
+            detected = parse_barcode_from_text(
+                "\n".join((context.stdout or "", context.stderr or ""))
+            )
+            if detected and normalize_barcode(detected) and detected.upper() != barcode_n:
+                return {"ok": False, "code": "barcode_mismatch",
+                        "message": f"输入条码 {barcode_n} 与读取到的条码 {detected} 不一致"}
+
+            operation = _start_operation("init", barcode=barcode_n)
+            try:
+                ok, message, _actual = tape_adapter.initialize(barcode_n, force=force)
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("adapter.initialize 异常")
+                _finish_operation(operation, ok=False,
+                                  message=f"初始化异常：{type(exc).__name__}: {exc}",
+                                  started=started)
+                return {"ok": False, "code": "init_error",
+                        "message": f"初始化失败：{type(exc).__name__}: {exc}",
+                        "operation_id": operation.id}
+            init_output = _last_output(tape_adapter)
+            if not ok:
+                _finish_operation(operation, ok=False, message=message,
+                                  started=started, output=init_output)
+                return {"ok": False, "code": "init_failed", "message": message,
+                        "operation_id": operation.id}
+
+            # 格式化成功后自动挂载
+            try:
+                mounted, mount_message, actual = tape_adapter.mount()
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("初始化后挂载异常")
+                mounted, mount_message, actual = False, f"挂载异常：{type(exc).__name__}: {exc}", None
+            mount_output = _last_output(tape_adapter)
+            actual_n = normalize_barcode(actual)
+            if not mounted:
+                _finish_operation(operation, ok=False,
+                                  message=f"初始化成功但挂载失败：{mount_message}",
+                                  started=started, output=mount_output)
+                return {"ok": False, "code": "mount_after_init_failed",
+                        "message": f"初始化成功但挂载失败：{mount_message}",
+                        "operation_id": operation.id}
+            if not barcode_matches(actual_n, barcode_n):
+                problems = _cleanup_tape(tape_adapter)
+                detail = f"初始化后条码不一致：输入 {barcode_n}，实际 {actual_n or '空'}"
+                if problems:
+                    detail += f"；{problems}"
+                _finish_operation(operation, ok=False, message=detail,
+                                  started=started, output=mount_output)
+                return {"ok": False, "code": "barcode_mismatch",
+                        "message": detail, "operation_id": operation.id}
+
+            volume, created = _upsert_volume(actual_n)
+            for other in _mounted_volumes():
+                if other.id != volume.id:
+                    _set_volume_status(other, "unknown")
+            volume.status = "mounted"
+            volume.device_path = getattr(tape_adapter, "device_path", None) or volume.device_path
+            volume.last_mounted_at = utcnow()
+            volume.last_error = None
+            db.session.commit()
+            _finish_operation(operation, ok=True, message=f"磁带初始化并挂载成功（{actual_n}）",
+                              started=started, output=mount_output, volume_id=volume.id)
+            return {
+                "ok": True,
+                "message": f"磁带初始化并挂载成功（{actual_n}）",
+                "barcode": actual_n,
+                "operation_id": operation.id,
+                "volume_id": volume.id,
+                "volume": _volume_dict(volume),
+                "created_volume": created,
+            }
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("initialize_tape 失败")
+        try:
+            db.session.rollback()
+        except Exception:  # pragma: no cover
+            pass
+        _fail_operation(getattr(operation, "id", None),
+                        f"初始化异常：{type(exc).__name__}: {exc}", started)
+        return {"ok": False, "code": "init_error",
+                "message": f"初始化失败：{type(exc).__name__}: {exc}"}
+
+
+@_serialized
+def recover_list_tape(app, *, adapter: TapeAdapter | None = None) -> dict:
+    """只读列出 ltfsck 回滚点，不修改磁带。"""
+    try:
+        with _maybe_app_context(app):
+            tape_adapter = _adapter(app, adapter)
+            if tape_adapter.status().mounted:
+                return {"ok": False, "message": "当前磁带已挂载，不能执行索引检查", "points": []}
+            ok, message, points = tape_adapter.recover_list()
+            return {"ok": bool(ok), "message": message, "points": points}
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("recover_list_tape 失败")
+        return {"ok": False, "message": f"{type(exc).__name__}: {exc}", "points": []}
+
+
+@_serialized
+def recover_tape_index(
+    app,
+    *,
+    generation: str | None = None,
+    deep: bool = False,
+    confirmed: bool = False,
+    adapter: TapeAdapter | None = None,
+) -> dict:
+    """执行 ltfsck 恢复并尝试挂载；恢复失败不自动格式化。"""
+    started = time.monotonic()
+    operation: TapeOperation | None = None
+    try:
+        with _maybe_app_context(app):
+            if not confirmed:
+                return {"ok": False, "code": "not_confirmed",
+                        "message": "必须确认索引恢复操作"}
+            if not generation and not deep:
+                return {"ok": False, "code": "missing_generation",
+                        "message": "必须指定 ltfsck 回滚点（或明确选择深度恢复）"}
+            tape_adapter = _adapter(app, adapter)
+            if tape_adapter.status().mounted:
+                return {"ok": False, "code": "already_mounted",
+                        "message": "当前磁带已挂载，不能执行索引恢复"}
+            operation = _start_operation("recover", barcode=_current_barcode())
+            try:
+                ok, message = tape_adapter.recover_index(generation, deep=deep)
+            except Exception as exc:  # noqa: BLE001
+                ok, message = False, f"{type(exc).__name__}: {exc}"
+            output = _last_output(tape_adapter)
+            if not ok:
+                _finish_operation(operation, ok=False, message=message,
+                                  started=started, output=output)
+                return {"ok": False, "code": "recover_failed",
+                        "message": message, "operation_id": operation.id}
+
+            mounted, mount_message, actual = tape_adapter.mount()
+            mount_output = _last_output(tape_adapter)
+            actual_n = normalize_barcode(actual)
+            if not mounted or not barcode_is_usable(actual_n):
+                problems = _cleanup_tape(tape_adapter) if mounted else ""
+                detail = f"恢复成功但挂载/条码校验失败：{mount_message}"
+                if problems:
+                    detail += f"；{problems}"
+                _finish_operation(operation, ok=False, message=detail,
+                                  started=started, output=mount_output)
+                return {"ok": False, "code": "mount_after_recover_failed",
+                        "message": detail, "operation_id": operation.id}
+            volume, _created = _upsert_volume(actual_n)
+            for other in _mounted_volumes():
+                if other.id != volume.id:
+                    _set_volume_status(other, "unknown")
+            volume.status = "mounted"
+            volume.last_mounted_at = utcnow()
+            volume.last_error = None
+            db.session.commit()
+            _finish_operation(operation, ok=True,
+                              message=f"索引恢复并挂载成功（{actual_n}）",
+                              started=started, output=mount_output, volume_id=volume.id)
+            return {"ok": True, "message": f"索引恢复并挂载成功（{actual_n}）",
+                    "barcode": actual_n, "operation_id": operation.id,
+                    "volume_id": volume.id, "volume": _volume_dict(volume)}
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("recover_tape_index 失败")
+        try:
+            db.session.rollback()
+        except Exception:  # pragma: no cover
+            pass
+        _fail_operation(getattr(operation, "id", None),
+                        f"索引恢复异常：{type(exc).__name__}: {exc}", started)
+        return {"ok": False, "code": "recover_error",
+                "message": f"索引恢复失败：{type(exc).__name__}: {exc}"}
+
+
+@_serialized
 def unmount_tape(app, *, adapter: TapeAdapter | None = None) -> dict:
     """卸载当前带：adapter.unmount() + 卷 status='unmounted'。不抛异常。"""
     started = time.monotonic()
@@ -614,12 +923,6 @@ def eject_tape(app, *, adapter: TapeAdapter | None = None) -> dict:
     operation: TapeOperation | None = None
     try:
         with _maybe_app_context(app):
-            cfg = getattr(app, "config", {}) or {}
-            if cfg.get("AUTO_EJECT", True) is False:
-                return {
-                    "ok": False,
-                    "message": "已禁用弹出（AVLIB_AUTO_EJECT=0，机柜门会被挡住）；请改用「卸载」",
-                }
             tape_adapter = _adapter(app, adapter)
             operation = _start_operation("eject", barcode=_current_barcode())
             prefix = ""

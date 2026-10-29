@@ -186,11 +186,20 @@ def test_mount_returns_busy_when_drive_locked(app):
     assert "正在进行" in data["message"]
 
 
-def test_eject_disabled_returns_clear_error(app):
+def test_manual_eject_is_not_blocked_by_auto_eject_config(app):
+    """AUTO_EJECT 只控制自动收带；手动按钮必须始终可用。"""
+    from types import SimpleNamespace
     from app.services.tape_ops import eject_tape
+
+    class DummyAdapter:
+        last_output = {"command": "ltfs release", "stdout": "", "stderr": ""}
+        def status(self):
+            return SimpleNamespace(mounted=False)
+        def eject(self):
+            return True, "磁带弹出成功"
 
     app.config["AUTO_EJECT"] = False
     with app.app_context():
-        result = eject_tape(app)
-    assert result["ok"] is False
-    assert "禁用" in result["message"]
+        result = eject_tape(app, adapter=DummyAdapter())
+    assert result["ok"] is True
+    assert "成功" in result["message"]

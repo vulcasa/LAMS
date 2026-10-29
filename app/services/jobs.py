@@ -67,10 +67,13 @@ def maybe_auto_assets(app, *, force: bool = False):
         now = time.monotonic()
         if not force and now - _last_auto_assets_at < interval:
             return None
-        # 队列里已有任何 pending/running 任务（尤其用户手动点的物化）时不插队；
-        # 自动轮询只在完全空闲时补下一批，避免用户任务一直等待。
-        active = Job.query.filter(Job.status.in_(("pending", "running"))).first()
-        if active is not None:
+        # 只和“资产任务”去重：自动封面/剧照可以排在抽帧、物化等其它任务之后，
+        # 但不能因为长时间抽帧导致永远不入队。新任务 id 更大，不会插到用户任务前面。
+        active_asset = Job.query.filter(
+            Job.kind.in_(ASSET_JOB_KINDS),
+            Job.status.in_(("pending", "running")),
+        ).first()
+        if active_asset is not None:
             return None
         summary = missing_assets_summary(app)
         if int(summary.get("actionable") or 0) <= 0:
@@ -349,16 +352,13 @@ def _audit_tape(app, job_id, payload, progress):
                 "message": "另一个磁带操作正在进行（挂载/卸载/弹出/盘点），盘点已跳过",
             }
         try:
-            eject = payload.get("eject")
-            if eject is None:
-                eject = bool(app.config.get("AUTO_EJECT", True))
             report = run_audit(
                 app,
                 payload["barcode"],
                 expected_barcode=payload.get("expected_barcode"),
                 adapter=get_adapter(app.config, app=app),
                 write_manifest=payload.get("write_manifest", True),
-                eject=bool(eject),
+                eject=False,
                 progress=progress,
             )
             if report.get("files_seen"):
@@ -495,10 +495,30 @@ def _hash_verify_run(app, job_id, payload, progress, hash_library_files):
 
 @register("video_frames_batch")
 def _video_frames_batch(app, job_id, payload, progress):
-    from app.models import Asset
+    from app.models import Asset, FrameFailure, LibraryFile
     from app.services.video_frames import (
         extract_frames, frame_count_setting, titles_missing_screenshots,
     )
+
+    def record_failures(title_id, failed_files):
+        if not failed_files:
+            return
+        for file_id, error in failed_files.items():
+            row = FrameFailure.query.filter_by(file_id=int(file_id)).first()
+            if row is None:
+                row = FrameFailure(
+                    file_id=int(file_id), title_id=int(title_id),
+                    path=None, error=str(error)[:1000],
+                )
+                db.session.add(row)
+            else:
+                row.error = str(error)[:1000]
+                row.failed_at = utcnow()
+                row.fail_count = int(row.fail_count or 0) + 1
+            source = db.session.get(LibraryFile, int(file_id))
+            if source is not None:
+                row.path = source.rel_path
+        db.session.commit()
 
     # 已有另一个批量截图任务在跑时不重复开批，避免同一批影片被生成两次
     active = (
@@ -516,6 +536,7 @@ def _video_frames_batch(app, job_id, payload, progress):
     _set_total(job_id, len(titles))
     frames = 0
     errors = []
+    failed_titles = 0
     done = 0
     for title in titles:
         # 任务开始后可能已被其它任务生成截图；逐部再确认，绝不重复生成
@@ -526,13 +547,18 @@ def _video_frames_batch(app, job_id, payload, progress):
         done += 1
         result = extract_frames(app, title.id, count=count, allow_tape=False)
         frames += int(result.get("frames") or 0)
+        failed_files = result.get("failed_files") or {}
+        if failed_files:
+            record_failures(title.id, failed_files)
+            failed_titles += 1
         if result.get("errors"):
             errors.extend(f"{title.dvd_id}: {err}" for err in result["errors"][:2])
         progress(done, f"批量截图 {done}/{len(titles)} · {title.dvd_id} · {frames} 张")
 
     next_job = None
-    # 本批成功且还有下一批时自动续跑；有错误则停下等待人工处理
-    if not errors and len(titles) >= limit and frames > 0:
+    # 单文件错误只记录并跳过；只要本批有成功帧且还有剩余标题，就继续下一批。
+    # 全部失败（frames=0）或系统性错误时停止，避免无限循环。
+    if frames > 0:
         has_more = bool(titles_missing_screenshots(app, limit=1))
         if has_more:
             next_job = enqueue("video_frames_batch", {"limit": limit})
@@ -540,6 +566,7 @@ def _video_frames_batch(app, job_id, payload, progress):
         "ok": True,
         "titles": len(titles),
         "frames": frames,
+        "failed_titles": failed_titles,
         "errors": errors[:100],
         "next_job_id": next_job,
     }

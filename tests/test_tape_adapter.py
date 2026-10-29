@@ -689,3 +689,9 @@ def test_scan_propagates_scanner_import_error_as_runtime_error(monkeypatch):
 
     with pytest.raises(RuntimeError, match="scanner"):
         adapter.scan("/media/tape", "FB1186")
+
+
+def test_parse_barcode_does_not_treat_medium_as_barcode():
+    from app.services.tape_adapter import parse_barcode_from_text
+    text = "LTFS17168E Cannot read volume: medium is not partitioned."
+    assert parse_barcode_from_text(text) is None

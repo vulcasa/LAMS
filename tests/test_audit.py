@@ -331,7 +331,7 @@ def test_run_audit_success_full_flow(app, mount_dir):
     assert report["run_id"] is not None
 
     # 顺序：mount → scan → unmount → eject；扫描时状态是 scanning，挂载时是 mounting
-    assert adapter.calls == ["mount", "scan", "unmount", "eject"]
+    assert adapter.calls == ["mount", "scan", "unmount"]
     assert adapter.run_statuses == ["mounting", "scanning"]
     assert adapter.scan_args == (str(mount_dir), "FB1186")
 
@@ -402,7 +402,7 @@ def test_run_audit_aborts_on_barcode_mismatch(app, mount_dir):
     assert report["actual_barcode"] == "FB9999"
     assert any("条码不符" in err for err in report["errors"])
     assert "scan" not in adapter.calls  # 绝不能扫描别的盘
-    assert adapter.calls == ["mount", "unmount", "eject"]  # 但要把盘退出来
+    assert adapter.calls == ["mount", "unmount"]  # 只卸载，弹出由用户手动执行
     assert not (mount_dir / MANIFEST_DIRNAME).exists()
     assert latest_run().status == STATUS_ABORTED
 
@@ -415,7 +415,7 @@ def test_run_audit_aborts_on_unknown_actual_barcode(app, mount_dir):
     assert report["status"] == STATUS_ABORTED
     assert any("实际条码不可用" in err for err in report["errors"])
     assert "scan" not in adapter.calls
-    assert adapter.calls == ["mount", "unmount", "eject"]
+    assert adapter.calls == ["mount", "unmount"]
 
 
 @pytest.mark.parametrize("declared", ["UNKNOWN", "", "  ", "none"])
@@ -469,7 +469,7 @@ def test_run_audit_scan_exception_marks_failed(app, mount_dir):
 
     assert report["status"] == STATUS_FAILED
     assert any("扫描失败" in err and "磁盘读错误" in err for err in report["errors"])
-    assert adapter.calls == ["mount", "scan", "unmount", "eject"]
+    assert adapter.calls == ["mount", "scan", "unmount"]
     assert not (mount_dir / MANIFEST_DIRNAME).exists()
     assert latest_run().status == STATUS_FAILED
 
@@ -481,7 +481,7 @@ def test_run_audit_scanner_value_error_is_aborted(app, mount_dir):
 
     assert report["status"] == STATUS_ABORTED
     assert any("扫描中止" in err for err in report["errors"])
-    assert adapter.calls == ["mount", "scan", "unmount", "eject"]
+    assert adapter.calls == ["mount", "scan", "unmount"]
 
 
 def test_run_audit_manifest_failure_marks_failed(app, mount_dir, monkeypatch):
@@ -497,7 +497,7 @@ def test_run_audit_manifest_failure_marks_failed(app, mount_dir, monkeypatch):
 
     assert report["status"] == STATUS_FAILED
     assert any("写 manifest 失败" in err for err in report["errors"])
-    assert adapter.calls == ["mount", "scan", "unmount", "eject"]
+    assert adapter.calls == ["mount", "scan", "unmount"]
     assert report["manifest_path"] is None
     run = latest_run()
     assert run.status == STATUS_FAILED
@@ -515,7 +515,8 @@ def test_run_audit_manifest_readback_failure_marks_failed(app, mount_dir, monkey
     assert any("读回校验失败" in err for err in report["errors"])
 
 
-def test_run_audit_eject_failure_marks_failed(app, mount_dir):
+def test_run_audit_never_ejects(app, mount_dir):
+    """盘点只负责卸载；弹出必须由用户手动点击按钮。"""
     (mount_dir / "a.mp4").write_bytes(b"x")
     adapter = FakeAdapter(
         app, mount_dir, scan_stats=make_stats(files_seen=1, new=1), eject_ok=False
@@ -523,15 +524,14 @@ def test_run_audit_eject_failure_marks_failed(app, mount_dir):
 
     report = run_audit(app, "FB1186", adapter=adapter)
 
-    assert report["status"] == STATUS_FAILED
-    assert any("弹出失败" in err for err in report["errors"])
-    # 数据已落盘（manifest 写成功），只是带没退出来
+    assert report["status"] == STATUS_DONE
+    assert report["ok"] is True
+    assert adapter.calls == ["mount", "scan", "unmount"]
+    assert "未弹出" in report["message"]
     assert report["manifest_path"] is not None
-    assert Path(report["manifest_path"]).is_file()
-    assert not (mount_dir / MANIFEST_DIRNAME).exists()
 
 
-def test_run_audit_unmount_failure_is_tolerated_if_eject_ok(app, mount_dir):
+def test_run_audit_unmount_failure_marks_failed_without_eject(app, mount_dir):
     (mount_dir / "a.mp4").write_bytes(b"x")
     adapter = FakeAdapter(
         app, mount_dir, scan_stats=make_stats(files_seen=1, new=1), unmount_ok=False
@@ -539,8 +539,9 @@ def test_run_audit_unmount_failure_is_tolerated_if_eject_ok(app, mount_dir):
 
     report = run_audit(app, "FB1186", adapter=adapter)
 
-    assert report["status"] == STATUS_DONE
+    assert report["status"] == STATUS_FAILED
     assert any("卸载失败" in err for err in report["errors"])
+    assert adapter.calls == ["mount", "scan", "unmount"]
 
 
 def test_run_audit_without_manifest(app, mount_dir):
@@ -611,11 +612,13 @@ def test_run_audit_http_end_to_end(app, mount_dir, mini_v1):
 
     assert report["status"] == STATUS_DONE
     assert adapter.scan_args == (str(mount_dir), "FB1186")
-    assert [path for _method, path in state.calls] == [
-        "/api/tape/mount",
-        "/api/tape/unmount",
-        "/api/tape/eject",
-    ]
+    paths = [path for _method, path in state.calls]
+    # 新增的状态探测会先访问 v1 状态接口；真正的生命周期仍是 mount→unmount→eject
+    lifecycle = [p for p in paths if p in (
+        "/api/tape/mount", "/api/tape/unmount", "/api/tape/eject")]
+    # mini v1 的 current 固定返回 mounted，所以本用例走“复用挂载”分支；盘点只卸载不弹出。
+    assert report["reused_mount"] is True
+    assert lifecycle == ["/api/tape/unmount"]
     manifest = read_manifest(app)
     assert manifest is not None
     assert manifest["file_count"] == 1
@@ -804,3 +807,55 @@ def test_run_audit_eject_disabled_stops_after_unmount(app, mount_dir):
     assert report["status"] == STATUS_DONE
     assert adapter.calls == ["mount", "scan", "unmount"]  # 没有 eject
     assert "未弹出" in report["message"]
+
+
+def test_run_audit_reuses_already_mounted_tape(app, mount_dir):
+    """用户先挂载再点盘点：复用挂载，不再第二次 mount。"""
+    volume = seed_volume(app, "FB1186", [make_file("SSIS-001/SSIS-001.mp4")])
+    (mount_dir / "SSIS-001").mkdir()
+    (mount_dir / "SSIS-001" / "SSIS-001.mp4").write_bytes(b"x")
+
+    class MountedAdapter(FakeAdapter):
+        def status(self):
+            return SimpleNamespace(mounted=True, barcode="FB1186")
+
+        def mount(self):
+            raise AssertionError("already mounted tape must not call mount again")
+
+    adapter = MountedAdapter(
+        app, mount_dir,
+        scan_stats=make_stats(volume_id=volume.id, files_seen=1, new=1),
+    )
+    report = run_audit(
+        app, "FB1186", expected_barcode="FB1186", adapter=adapter,
+        write_manifest=False,
+    )
+    assert report["ok"] is True
+    assert report["reused_mount"] is True
+    assert "mount" not in adapter.calls
+    assert adapter.calls == ["scan", "unmount"]
+
+
+def test_run_audit_reuses_mount_when_volume_label_missing(app, mount_dir):
+    """已挂载但 .volume_label 读不到时，用库中已校验条码兜底。"""
+    volume = seed_volume(app, "FB1186", [make_file("SSIS-001/SSIS-001.mp4")])
+    (mount_dir / "SSIS-001").mkdir()
+    (mount_dir / "SSIS-001" / "SSIS-001.mp4").write_bytes(b"x")
+
+    class NoLabelMountedAdapter(FakeAdapter):
+        def status(self):
+            return SimpleNamespace(mounted=True, barcode=None)
+
+        def mount(self):
+            raise AssertionError("already mounted tape must not call mount again")
+
+    adapter = NoLabelMountedAdapter(
+        app, mount_dir,
+        scan_stats=make_stats(volume_id=volume.id, files_seen=1, new=1),
+    )
+    report = run_audit(app, "FB1186", expected_barcode="FB1186", adapter=adapter,
+                       write_manifest=False, eject=False)
+    assert report["ok"] is True
+    assert report["actual_barcode"] == "FB1186"
+    assert report["reused_mount"] is True
+    assert adapter.calls == ["scan", "unmount"]

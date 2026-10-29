@@ -49,7 +49,7 @@ from typing import Any, Iterable
 
 from app.config import Config
 from app.db import db
-from app.models import AuditRun, LibraryFile, utcnow
+from app.models import AuditRun, LibraryFile, LibraryVolume, utcnow
 
 from .tape_adapter import (
     TapeAdapter,
@@ -555,8 +555,28 @@ def read_manifest_from_db(app, barcode: str | None = None) -> dict | None:
 # ---------------------------------------------------------------------------
 # run_audit
 # ---------------------------------------------------------------------------
+def _sync_release_status(result: dict, *, eject: bool) -> None:
+    """把 DB 里的卷状态同步到物理收带结果，避免页面出现 unmounted/mounted 矛盾。"""
+    if not result.get("unmount_ok") and not (eject and result.get("eject_ok")):
+        return
+    target = "ejected" if (eject and result.get("eject_ok")) else "unmounted"
+    try:
+        rows = LibraryVolume.query.filter(
+            LibraryVolume.kind == "tape",
+            LibraryVolume.status.in_(("mounted", "unmounted")),
+        ).all()
+        for volume in rows:
+            volume.status = target
+            if target != "mounted":
+                volume.last_error = None
+        db.session.commit()
+    except Exception:  # noqa: BLE001 - 状态同步失败不能掩盖盘点结果
+        db.session.rollback()
+        logger.warning("同步磁带卷状态失败", exc_info=True)
+
+
 def _release(adapter: TapeAdapter, errors: list[str], *, eject: bool = True) -> dict:
-    """先 unmount；``eject=True`` 时再 eject（best-effort，绝不抛）。"""
+    """先 unmount；``eject=True`` 时再 eject（best-effort，绝不抛），并同步 DB 卷状态。"""
     result = {"unmount_ok": False, "unmount_message": "", "eject_ok": False, "eject_message": ""}
     try:
         ok, message = adapter.unmount()
@@ -570,6 +590,7 @@ def _release(adapter: TapeAdapter, errors: list[str], *, eject: bool = True) -> 
         result["eject_ok"] = True
         result["eject_message"] = "已禁用自动弹出（AVLIB_AUTO_EJECT=0）"
         result["eject_skipped"] = True
+        _sync_release_status(result, eject=False)
         return result
 
     try:
@@ -579,6 +600,7 @@ def _release(adapter: TapeAdapter, errors: list[str], *, eject: bool = True) -> 
     result["eject_ok"], result["eject_message"] = bool(ok), str(message)
     if not ok:
         errors.append(f"弹出失败：{message}")
+    _sync_release_status(result, eject=True)
     return result
 
 
@@ -640,7 +662,7 @@ def run_audit(
     expected_barcode: str | None = None,
     adapter: TapeAdapter | None = None,
     write_manifest: bool = True,
-    eject: bool = True,
+    eject: bool = False,
     progress=None,
 ) -> dict:
     """完整盘点一盘磁带，返回结果 dict（不抛异常，UI 看 ``ok/status/errors``）。
@@ -651,7 +673,7 @@ def run_audit(
     - ``expected_barcode``：不传时默认同 ``barcode``；显式传空串表示"只校验非 UNKNOWN"；
     - ``adapter``：不传则按 ``app.config`` 用 :func:`get_adapter` 建（默认 HTTP）；
     - ``write_manifest``：False 时跳过写盘（调试/只读盘用）；
-    - ``eject``：False 时结束只卸载不弹出（机柜门会被挡住的场景）；
+    - ``eject``：**保留参数兼容，但盘点永远只卸载，不自动弹出**；弹出由用户在磁带页手动执行；
     - ``progress(done, message="")``：阶段进度 0–100。
 
     返回 dict 字段：``ok, status, run_id, barcode, expected_barcode, actual_barcode,
@@ -711,14 +733,57 @@ def run_audit(
                 emit(100, "已中止")
                 return report
 
-            # --- 1. 挂载 --------------------------------------------------
+            # --- 1. 挂载；如果磁带已挂载则复用，不能再跑一次 ltfs mount ----
             run.status = STATUS_MOUNTING
             db.session.commit()
-            emit(1, "正在挂载磁带")
-            try:
-                mount_ok, mount_message, actual = adapter.mount()
-            except Exception as exc:
-                mount_ok, mount_message, actual = False, f"{type(exc).__name__}: {exc}", None
+            emit(1, "正在确认磁带挂载状态")
+            reused_mount = False
+            current_status = None
+            status_fn = getattr(adapter, "status", None)
+            if callable(status_fn):
+                try:
+                    current_status = status_fn()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("读取挂载状态失败，按未挂载处理: %s", exc)
+            if getattr(current_status, "mounted", False):
+                reused_mount = True
+                actual = normalize_barcode(getattr(current_status, "barcode", None))
+                if not actual:
+                    label_fn = getattr(adapter, "volume_label", None)
+                    if callable(label_fn):
+                        try:
+                            actual = normalize_barcode(label_fn())
+                        except Exception:  # noqa: BLE001
+                            actual = None
+                if not actual:
+                    # 某些 LTFS 版本正常挂载后 .volume_label 仍不可读；若库中
+                    # 已有当前预期条码的卷，说明这次挂载已由 mount_tape 校验过，
+                    # 可在复用挂载时作为条码来源（仍会走下面的 expected 比对）。
+                    if expected:
+                        known = LibraryVolume.query.filter_by(
+                            kind="tape", ref=expected
+                        ).first()
+                        if known is not None:
+                            actual = normalize_barcode(known.ref)
+                    if not actual:
+                        mounted_volume = (
+                            LibraryVolume.query.filter_by(
+                                kind="tape", status="mounted"
+                            ).order_by(
+                                LibraryVolume.last_mounted_at.desc(),
+                                LibraryVolume.id.desc(),
+                            ).first()
+                        )
+                        if mounted_volume is not None:
+                            actual = normalize_barcode(mounted_volume.ref)
+                mount_ok, mount_message = True, "当前磁带已挂载，复用挂载"
+                emit(3, "当前磁带已挂载，直接扫描")
+            else:
+                emit(1, "正在挂载磁带")
+                try:
+                    mount_ok, mount_message, actual = adapter.mount()
+                except Exception as exc:
+                    mount_ok, mount_message, actual = False, f"{type(exc).__name__}: {exc}", None
             actual_n = normalize_barcode(actual)
             run.actual_barcode = actual_n
             db.session.commit()
@@ -740,17 +805,18 @@ def run_audit(
                 errors.append(
                     f"实际条码不可用（{actual_n or '空'}）：无法确认是哪盘磁带，中止并退出"
                 )
-                _release(adapter, errors)
+                _release(adapter, errors, eject=False)
                 _finish(run, report, STATUS_ABORTED, "实际条码不可用，已中止", errors)
                 emit(100, "已中止")
                 return report
             if not barcode_matches(actual_n, expected):
                 errors.append(f"条码不符：预期 {expected or '(任意可用条码)'}，实际 {actual_n}，已中止")
-                _release(adapter, errors)
+                _release(adapter, errors, eject=False)
                 _finish(run, report, STATUS_ABORTED, "实际条码与预期不符，已中止", errors)
                 emit(100, "已中止")
                 return report
             report["barcode"] = actual_n
+            report["reused_mount"] = reused_mount
 
             # --- 3. 扫描 --------------------------------------------------
             run.status = STATUS_SCANNING
@@ -761,13 +827,13 @@ def run_audit(
             except ValueError as exc:
                 # scanner 自身的防串盘/参数校验：归为 aborted
                 errors.append(f"扫描中止：{exc}")
-                _release(adapter, errors)
+                _release(adapter, errors, eject=False)
                 _finish(run, report, STATUS_ABORTED, "扫描中止", errors)
                 emit(100, "已中止")
                 return report
             except Exception as exc:
                 errors.append(f"扫描失败：{type(exc).__name__}: {exc}")
-                _release(adapter, errors)
+                _release(adapter, errors, eject=False)
                 _finish(run, report, STATUS_FAILED, "磁带扫描失败", errors)
                 emit(100, "扫描失败")
                 return report
@@ -808,7 +874,7 @@ def run_audit(
                         raise OSError("manifest 写入后读回校验失败")
                 except Exception as exc:
                     errors.append(f"写 manifest 失败：{type(exc).__name__}: {exc}")
-                    _release(adapter, errors)
+                    _release(adapter, errors, eject=False)
                     _finish(run, report, STATUS_FAILED, "manifest 写入失败", errors)
                     emit(100, "manifest 写入失败")
                     return report
@@ -821,19 +887,13 @@ def run_audit(
 
             # --- 5. 收带：unmount（→ eject，可禁用） -----------------------
             emit(97, "正在卸载并弹出磁带" if eject else "正在卸载磁带（不弹出）")
-            release = _release(adapter, errors, eject=eject)
+            release = _release(adapter, errors, eject=False)
             # 卸载失败但弹出成功：eject 会带走挂载，按原语义容忍
             if not release["unmount_ok"] and not (eject and release["eject_ok"]):
                 _finish(run, report, STATUS_FAILED, "盘点数据已写入，但磁带卸载失败", errors)
                 emit(100, "卸载失败")
                 return report
-            if eject and not release["eject_ok"]:
-                errors.append("磁带未能弹出，请人工处理后再换盘")
-                _finish(run, report, STATUS_FAILED, "盘点数据已写入，但磁带弹出失败", errors)
-                emit(100, "弹出失败")
-                return report
-
-            done_message = "盘点完成" if eject else "盘点完成（已卸载，未弹出）"
+            done_message = "盘点完成（已卸载，未弹出；如需弹出请手动点击「弹出」）"
             _finish(run, report, STATUS_DONE, done_message, errors)
             emit(100, done_message)
             return report

@@ -438,6 +438,20 @@ class PlaybackHistory(db.Model):
     play_count = Column(Integer, default=1, nullable=False)
 
 
+class FrameFailure(db.Model):
+    """视频抽帧失败标记：损坏/无法打开的文件不再反复进入批量任务。"""
+
+    __tablename__ = "frame_failure"
+
+    id = Column(Integer, primary_key=True)
+    file_id = Column(Integer, ForeignKey("library_file.id"), unique=True, nullable=False, index=True)
+    title_id = Column(Integer, ForeignKey("title.id"), nullable=False, index=True)
+    path = Column(Text)
+    error = Column(Text)
+    failed_at = Column(DateTime, default=utcnow, nullable=False)
+    fail_count = Column(Integer, default=1, nullable=False)
+
+
 class TapeManifest(db.Model):
     """盘点 manifest 的数据库副本（文件副本在 Config.MANIFEST_DIR）。"""
 

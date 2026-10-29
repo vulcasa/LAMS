@@ -326,3 +326,46 @@ def test_batch_frames_skips_titles_with_existing_shots(tmp_path, monkeypatch):
         )
         assert calls == []
         assert result["ok"] is True
+
+
+def test_batch_marks_failed_file_and_continues(tmp_path, monkeypatch):
+    """坏文件只记录 failure，不中断后续批次。"""
+    from app.models import FrameFailure
+    from app.services import jobs
+
+    app = create_app({
+        "TESTING": True, "WORKER_ENABLED": False,
+        "DATA_DIR": tmp_path / "data", "DB_PATH": tmp_path / "data" / "test.db",
+    })
+    nas = tmp_path / "nas"; nas.mkdir()
+    (nas / "BAD-001.mp4").write_bytes(b"x")
+    (nas / "GOOD-001.mp4").write_bytes(b"x")
+    with app.app_context():
+        volume = LibraryVolume(kind="nas", ref=str(nas))
+        db.session.add(volume); db.session.flush()
+        bad = Title(dvd_id="BAD-001"); good = Title(dvd_id="GOOD-001")
+        db.session.add_all([bad, good]); db.session.flush()
+        bad_file = LibraryFile(volume_id=volume.id, rel_path="BAD-001.mp4",
+                               name="BAD-001.mp4", size=1, title_id=bad.id)
+        good_file = LibraryFile(volume_id=volume.id, rel_path="GOOD-001.mp4",
+                                name="GOOD-001.mp4", size=1, title_id=good.id)
+        db.session.add_all([bad_file, good_file]); db.session.commit()
+        bad_file_id = bad_file.id
+
+        def fake_extract(_app, title_id, **_kwargs):
+            title = db.session.get(Title, title_id)
+            if title.dvd_id == "BAD-001":
+                return {"frames": 0, "errors": ["moov atom not found"],
+                        "failed_files": {bad_file_id: "moov atom not found"}}
+            return {"frames": 1, "errors": []}
+
+        monkeypatch.setattr(video_frames, "extract_frames", fake_extract)
+        result = jobs._handlers["video_frames_batch"](
+            app, 9999999, {"limit": 2}, lambda done, msg="": None
+        )
+        assert result["failed_titles"] == 1
+        assert result["frames"] == 1
+        assert result["next_job_id"] is not None
+        assert FrameFailure.query.filter_by(file_id=bad_file_id).count() == 1
+        # 坏文件被标记后，不会再被当成待抽帧文件
+        assert video_frames.find_video_files(app, bad) == []

@@ -3,7 +3,8 @@
 [![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Flask](https://img.shields.io/badge/Flask-3.x-000000?logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
 [![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
-[![Tests](https://img.shields.io/badge/tests-855%20passed-brightgreen)](#测试)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue)]()
+[![Tests](https://img.shields.io/badge/tests-869%20passed-brightgreen)](#测试)
 
 **LAMS** 是一个自托管的个人 AV 归档管理系统，用来把 **NAS 热数据** 与 **LTO 磁带冷数据** 统一编目、检索、播放和备份。
 
@@ -49,6 +50,7 @@
 - [数据目录](#数据目录)
 - [测试](#测试)
 - [v1.1.0 更新计划](docs/PLAN-v1.1.0.md)
+- [更新记录](CHANGELOG.md)
 - [后续版本路线图](docs/ROADMAP.md)
 - [v1.2.0 非标来源元数据方案](docs/PLAN-metadata-v1.2.md)
 - [安全与限制](#安全与限制)
@@ -124,7 +126,7 @@
 | 磁带 | 内置开源 LTFS（编译进镜像） |
 | 媒体工具 | ffmpeg / ffprobe（仅用于抽帧、缩略图等，不用于播放转码） |
 
-当前测试：**855 passed**。
+当前测试：**869 passed**。
 
 ---
 
@@ -233,7 +235,7 @@ av-archive/
 │   ├── selfcheck.py            # 部署自检
 │   ├── worker.py               # 独立 worker 进程
 │   └── make_dist.py            # 代码包打包
-├── tests/                      # pytest（855 用例）
+├── tests/                      # pytest（869 用例）
 ├── docs/                       # 设计、部署、契约、截图
 ├── research/                   # 数据源 / 字幕 / 覆盖率调研
 ├── vendor/                     # LTFS / uthash 源码包（用于镜像构建）
@@ -550,7 +552,7 @@ data/
 .venv/bin/python -m pytest tests/ -q
 ```
 
-当前：**855 passed**。
+当前：**869 passed**。
 
 测试覆盖：
 

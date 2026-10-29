@@ -63,6 +63,10 @@ class Config:
     AUTO_EJECT = _bool("AVLIB_AUTO_EJECT", True)
     # 设备信息类查询（device_info/device_list）的短超时：真机上可能卡住
     LTFS_INFO_TIMEOUT = int(os.environ.get("AVLIB_LTFS_INFO_TIMEOUT", "15"))
+    MKLTFS_BIN = os.environ.get("AVLIB_MKLTFS_BIN", "mkltfs")
+    LTFSCK_BIN = os.environ.get("AVLIB_LTFSCK_BIN", "ltfsck")
+    TAPE_INIT_TIMEOUT = int(os.environ.get("AVLIB_TAPE_INIT_TIMEOUT", "600"))
+    TAPE_RECOVER_TIMEOUT = int(os.environ.get("AVLIB_TAPE_RECOVER_TIMEOUT", "1800"))
     # 只读打开 v1 的 SQLite（backfill 用），可选
     V1_DB_PATH = os.environ.get("AVLIB_V1_DB_PATH", "")
     # 文件浏览器允许访问的容器内根目录（逗号分隔）

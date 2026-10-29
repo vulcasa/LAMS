@@ -72,12 +72,195 @@
   {% endif %}
 </section>
 
+<div class="avlib-modal" id="tapeModal" hidden role="dialog" aria-modal="true">
+  <div class="avlib-modal-box">
+    <div class="avlib-modal-head">
+      <b id="tapeModalTitle">磁带操作</b>
+      <button type="button" class="lightbox-close" id="tapeModalClose" aria-label="关闭">×</button>
+    </div>
+    <div class="tape-modal-body" id="tapeModalBody"></div>
+    <div class="avlib-modal-actions" id="tapeModalActions"></div>
+  </div>
+</div>
+
 
 <script>
 async function hashWithFrames(volumeId) {
   if (!await avlib.confirm('会实际读带并对视频抽帧，可能很慢，继续？', '哈希 + 抽帧')) return;
   avlib.enqueue('integrity/hash', {volume_id: volumeId, limit: 100, verify: true, with_frames: true, max_videos: 10});
 }
+
+function escTape(value) {
+  return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) {
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+function tapeCsrf() {
+  var m = document.cookie.match(/(?:^|; )csrf_token=([^;]*)/);
+  return m ? decodeURIComponent(m[1]) : '';
+}
+async function tapePost(path, body) {
+  const headers = { 'Content-Type': 'application/json' };
+  const token = tapeCsrf();
+  if (token) headers['X-CSRF-Token'] = token;
+  const r = await fetch(path, { method: 'POST', headers: headers, body: JSON.stringify(body || {}) });
+  return [r.ok, await r.json().catch(function () { return {}; })];
+}
+function tapeModal(title, body, actions) {
+  document.getElementById('tapeModalTitle').textContent = title;
+  document.getElementById('tapeModalBody').innerHTML = body;
+  const wrap = document.getElementById('tapeModalActions');
+  wrap.innerHTML = '';
+  (actions || []).forEach(function (a) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'btn ' + (a.cls || '');
+    b.textContent = a.text;
+    b.addEventListener('click', a.onClick);
+    wrap.appendChild(b);
+  });
+  document.getElementById('tapeModal').hidden = false;
+}
+function closeTapeModal() {
+  document.getElementById('tapeModal').hidden = true;
+}
+function openTapeFormat(data) {
+  if (!data || !data.operation_id) {
+    avlib.alert('缺少挂载失败上下文，请重新执行挂载。', '初始化被拒绝');
+    return;
+  }
+  if (data.barcode_registered) {
+    avlib.alert('该磁带已在库中登记，禁止格式化。', '初始化被拒绝');
+    return;
+  }
+  const detected = data.detected_barcode || '';
+  tapeModal('磁带未初始化', `
+    <p>当前插入的磁带无法读取 LTFS 标签，可能尚未初始化。</p>
+    <p class="tape-warning">格式化会清除磁带上的全部数据，且不可撤销。</p>
+    <label class="tape-field">磁带条码
+      <input id="tapeInitBarcode" maxlength="6" value="${escTape(detected)}" placeholder="如 FB1186">
+    </label>
+    <label class="checkbox tape-check"><input type="checkbox" id="tapeInitConfirm"> 我确认这是空白/可格式化的磁带，并且条码与磁带标签一致</label>
+    <label class="checkbox tape-check"><input type="checkbox" id="tapeInitForce"> 使用强制格式化 mkltfs -f（会覆盖已有 LTFS 数据）</label>
+    <p class="tape-modal-error" id="tapeModalError"></p>
+  `, [
+    { text: '取消', onClick: closeTapeModal },
+    { text: '格式化并挂载', cls: 'danger', onClick: function () { doTapeFormat(data); } },
+  ]);
+  const input = document.getElementById('tapeInitBarcode');
+  const confirm = document.getElementById('tapeInitConfirm');
+  function refresh() {
+    const valid = /^[A-Za-z0-9]{6}$/.test((input.value || '').trim());
+    const btn = [...document.querySelectorAll('#tapeModalActions .btn')].find(b => b.classList.contains('danger'));
+    if (btn) btn.disabled = !(valid && confirm.checked);
+  }
+  input.addEventListener('input', refresh); confirm.addEventListener('change', refresh); refresh();
+}
+async function doTapeFormat(data) {
+  if (!data || !data.operation_id) {
+    await avlib.alert('缺少挂载失败上下文，请重新执行挂载。', '初始化被拒绝');
+    return;
+  }
+  if (data.barcode_registered) {
+    await avlib.alert('该磁带已在库中登记，禁止格式化。', '初始化被拒绝');
+    return;
+  }
+  const barcode = (document.getElementById('tapeInitBarcode').value || '').trim().toUpperCase();
+  const confirmed = document.getElementById('tapeInitConfirm').checked;
+  const force = document.getElementById('tapeInitForce').checked;
+  const error = document.getElementById('tapeModalError');
+  if (!/^[A-Za-z0-9]{6}$/.test(barcode) || !confirmed) {
+    if (error) error.textContent = '请输入 6 位条码并勾选确认';
+    return;
+  }
+  const buttons = [...document.querySelectorAll('#tapeModalActions .btn')];
+  buttons.forEach(b => b.disabled = true);
+  if (error) error.textContent = force ? '正在强制格式化并挂载…' : '正在格式化并挂载…';
+  const [ok, result] = await tapePost('/api/tape/init', {
+    barcode: barcode, confirmed: true, force: force,
+    mount_operation_id: data.operation_id,
+  });
+  if (ok && result.ok) {
+    await avlib.alert(result.message || '磁带初始化成功', '初始化完成');
+    location.reload();
+    return;
+  }
+  if (error) error.textContent = result.message || result.error || '初始化失败';
+  buttons.forEach(b => b.disabled = false);
+}
+async function openTapeRecovery(data) {
+  const actions = [{ text: '取消', onClick: closeTapeModal }];
+  // 已登记条码绝不显示格式化入口；只允许索引恢复。
+  if (!data.barcode_registered) {
+    actions.push({ text: '不恢复，格式化…', onClick: function () { openTapeFormat(data); } });
+  }
+  actions.push({ text: '尝试索引恢复', cls: 'primary', onClick: function () { tapeRecoverList(data); } });
+  tapeModal('磁带回读失败', `
+    <p>检测到条码：<b>${escTape(data.detected_barcode || '未读取到')}</b>${data.barcode_registered ? '（已登记）' : '（未登记）'}</p>
+    <p>可能原因：磁带索引损坏、上次未正常卸载，或磁带确实是空白/非 LTFS 卷。</p>
+    <p>是否先尝试 <code>ltfsck</code> 索引恢复？</p>
+  `, actions);
+}
+async function tapeRecoverList(data) {
+  tapeModal('磁带回读失败', '<p>正在读取 ltfsck 回滚点…</p>', [{ text: '取消', onClick: closeTapeModal }]);
+  const [ok, result] = await tapePost('/api/tape/recover/list', {});
+  if (!ok || !result.ok) {
+    tapeModal('磁带回读失败', `<p class="tape-modal-error">${escTape(result.message || '读取回滚点失败')}</p><p>可以继续格式化，或取消后检查磁带。</p>`, [
+      { text: '取消', onClick: closeTapeModal },
+      { text: '不恢复，格式化…', onClick: function () { openTapeFormat(data); } },
+    ]);
+    return;
+  }
+  const points = result.points || [];
+  if (!points.length) {
+    tapeModal('磁带回读失败', '<p>没有找到可用的 ltfsck 回滚点，无法索引恢复。</p><p>可以继续格式化，或取消后检查磁带。</p>', [
+      { text: '取消', onClick: closeTapeModal },
+      { text: '不恢复，格式化…', onClick: function () { openTapeFormat(data); } },
+    ]);
+    return;
+  }
+  const options = points.map(function (p, i) {
+    return `<option value="${escTape(p.generation)}">${escTape(p.raw || p.generation)}</option>`;
+  }).join('');
+  tapeModal('磁带回读失败', `<p>找到 ${points.length} 个回滚点：</p><select id="tapeRecoverGeneration">${options}</select><p class="muted">恢复会修改索引，但不会格式化磁带。</p>`, [
+    { text: '取消', onClick: closeTapeModal },
+    { text: '不恢复，格式化…', onClick: function () { openTapeFormat(data); } },
+    { text: '开始恢复', cls: 'primary', onClick: function () { tapeRecover(data); } },
+  ]);
+}
+async function tapeRecover(data) {
+  const select = document.getElementById('tapeRecoverGeneration');
+  const generation = select ? select.value : null;
+  tapeModal('确认索引恢复', `
+    <p>将执行 <code>ltfsck</code> 索引恢复，可能修改磁带索引，但不会格式化磁带。</p>
+    <p>回滚点：<b>${escTape(generation || '未指定')}</b></p>
+    <p>确认继续吗？</p>
+  `, [
+    { text: '取消', onClick: closeTapeModal },
+    { text: '开始恢复', cls: 'primary', onClick: function () { runTapeRecover(data, generation); } },
+  ]);
+}
+async function runTapeRecover(data, generation) {
+  tapeModal('磁带回读失败', '<p>正在执行索引恢复，请稍候…</p>', [{ text: '取消', onClick: closeTapeModal }]);
+  const [ok, result] = await tapePost('/api/tape/recover', {generation: generation, confirmed: true});
+  if (ok && result.ok) {
+    await avlib.alert(result.message || '索引恢复成功', '恢复完成');
+    location.reload();
+    return;
+  }
+  tapeModal('磁带回读失败', `<p class="tape-modal-error">${escTape(result.message || result.error || '索引恢复失败')}</p><p>恢复失败不会自动格式化，请确认后再继续。</p>`, [
+    { text: '取消', onClick: closeTapeModal },
+    ...(data.barcode_registered ? [] : [{ text: '不恢复，格式化…', onClick: function () { openTapeFormat(data); } }]),
+  ]);
+}
+document.getElementById('tapeModalClose').addEventListener('click', closeTapeModal);
+document.addEventListener('keydown', function (event) {
+  if (event.key === 'Escape' && !document.getElementById('tapeModal').hidden) {
+    closeTapeModal();
+  }
+});
+document.getElementById('tapeModal').addEventListener('click', function (e) {
+  if (e.target === this) closeTapeModal();
+});
 
 async function tapeOp(action) {
   if (action === 'unmount') {
@@ -88,12 +271,21 @@ async function tapeOp(action) {
   const body = action === 'mount'
     ? { expected_barcode: document.getElementById('expect-barcode').value || null }
     : {};
-  const r = await fetch('/api/tape/' + action, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-  });
-  const data = await r.json().catch(() => ({}));
-  await avlib.alert((data.ok ? '成功：' : '失败：') + (data.message || data.error || JSON.stringify(data)), data.ok ? '操作成功' : '操作失败');
-  location.reload();
+  const [ok, data] = await tapePost('/api/tape/' + action, body);
+  if (ok && data.ok) {
+    await avlib.alert((data.message || '成功'), '操作成功');
+    location.reload();
+    return;
+  }
+  if (action === 'mount' && data.needs_init) {
+    if (data.barcode_registered) {
+      await avlib.alert('该磁带已在库中登记，不能格式化。请检查磁带索引或挂载状态。', '已登记磁带');
+      return;
+    }
+    openTapeRecovery(data);
+    return;
+  }
+  await avlib.alert((data.message || data.error || JSON.stringify(data)), '操作失败');
 }
 </script>
 {% endblock %}
