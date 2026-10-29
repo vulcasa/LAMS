@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Flask](https://img.shields.io/badge/Flask-3.x-000000?logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
 [![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
-[![Version](https://img.shields.io/badge/version-1.1.2-blue)]()
+[![Version](https://img.shields.io/badge/version-1.1.3-blue)]()
 [![Tests](https://img.shields.io/badge/tests-869%20passed-brightgreen)](#测试)
 
 **LAMS** 是一个自托管的个人 AV 归档管理系统，用来把 **NAS 热数据** 与 **LTO 磁带冷数据** 统一编目、检索、播放和备份。
@@ -432,6 +432,8 @@ sudo bash install.sh
 - 数据目录：`/lams/data`
 - 端口：`5080`
 - 自动安装依赖、拉取 GitHub 最新代码、注册开机自启、尝试开放防火墙端口
+- 安装前交互询问是否配置 HTTP/HTTPS 代理，支持地址、端口、用户名、密码；也可用 `--proxy URL` / `--no-proxy`
+- 自动检查并补齐最小化 Debian 镜像缺失的 `systemd`、`procps`、`iproute2`、`lsscsi` 等基础包
 - 提供 `--skip-ltfs`（仅媒体库）和 `--update`（更新已有安装）等选项
 - LTFS 默认从官方 `LinearTapeFileSystem/ltfs` 源码编译；网络失败时回退项目 `vendor/` 源码
 

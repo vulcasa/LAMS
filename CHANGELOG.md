@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.1.3 — 2026-10-29
+
+### 安装器增强
+
+- 安装前交互询问是否配置代理；
+- 支持代理地址、端口、用户名、密码（密码不回显）；
+- 代理自动应用到 apt/dnf/pacman/zypper/pip/git/curl，并写入服务环境；
+- 支持 `--proxy URL` 和 `--no-proxy` 非交互配置；
+- Debian minimal 镜像自动补齐 `systemd`、`systemd-sysv`、`procps`、`psmisc`、`iproute2`、`hostname`、`lsscsi` 等基础包；
+- 服务注册前检查 PID 1 是否为 systemd，不是时给出明确错误；
+- 增加 `wget`、`gnupg` 等基础网络工具依赖。
+
+
 ## v1.1.2 — 2026-10-29
 
 ### 一键安装的 LTFS 编译修正

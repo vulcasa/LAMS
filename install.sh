@@ -14,6 +14,10 @@ LAMS_THREADS="${LAMS_THREADS:-12}"
 LAMS_SKIP_LTFS="${LAMS_SKIP_LTFS:-0}"
 LAMS_LTFS_REPO="${LAMS_LTFS_REPO:-https://github.com/LinearTapeFileSystem/ltfs.git}"
 LAMS_LTFS_SOURCE="${LAMS_LTFS_SOURCE:-github}"
+PROXY_ENABLED=0
+PROXY_DISABLED=0
+PROXY_URL=""
+PROXY_CLI=""
 LAMS_UPDATE=0
 
 say()  { printf '\033[1;34m[LAMS]\033[0m %s\n' "$*"; }
@@ -39,6 +43,8 @@ LAMS 一键安装脚本
   --skip-ltfs         不编译 LTFS（仅媒体库，不启用磁带）
   --ltfs-repo URL     官方 LTFS 源码地址（默认: ${LAMS_LTFS_REPO}）
   --ltfs-source SRC   github 或 vendor（默认: ${LAMS_LTFS_SOURCE}）
+  --proxy URL         使用代理（如 http://user:pass@host:port；不传则交互询问）
+  --no-proxy          跳过代理配置
   --update            更新已有安装（会尝试 fast-forward）
   -h, --help          显示帮助
 
@@ -61,6 +67,8 @@ while [[ $# -gt 0 ]]; do
     --skip-ltfs) LAMS_SKIP_LTFS=1; shift ;;
     --ltfs-repo) LAMS_LTFS_REPO="$2"; shift 2 ;;
     --ltfs-source) LAMS_LTFS_SOURCE="$2"; shift 2 ;;
+    --proxy) PROXY_CLI="$2"; shift 2 ;;
+    --no-proxy) PROXY_DISABLED=1; shift ;;
     --update) LAMS_UPDATE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "未知参数: $1" ;;
@@ -115,7 +123,10 @@ install_linux_packages() {
       export DEBIAN_FRONTEND=noninteractive
       apt-get update -y
       apt-get install -y --no-install-recommends \
-        python3 python3-venv python3-pip git curl ca-certificates \
+        bash coreutils findutils sed gawk grep tar gzip xz-utils \
+        apt-transport-https ca-certificates wget gnupg \
+        python3 python3-venv python3-pip git curl \
+        systemd systemd-sysv procps psmisc iproute2 hostname \
         ffmpeg cifs-utils sg3-utils mt-st lsscsi util-linux \
         build-essential autoconf automake libtool pkg-config \
         libfuse-dev libxml2-dev libssl-dev libsnmp-dev libicu-dev uuid-dev \
@@ -124,7 +135,8 @@ install_linux_packages() {
     dnf|yum)
       $pm install -y epel-release || true
       $pm install -y \
-        python3 python3-pip python3-devel git curl ca-certificates \
+        python3 python3-pip python3-devel git curl ca-certificates wget gnupg \
+        procps-ng iproute hostname \
         cifs-utils sg3_utils mt-st lsscsi util-linux \
         gcc gcc-c++ make autoconf automake libtool pkgconf-pkg-config \
         fuse-devel libxml2-devel openssl-devel net-snmp-devel libicu-devel libuuid-devel \
@@ -134,13 +146,16 @@ install_linux_packages() {
       ;;
     pacman)
       pacman -Sy --noconfirm --needed \
-        python python-pip git curl ca-certificates ffmpeg cifs-utils sg3_utils mt-st lsscsi util-linux \
+        python python-pip git curl ca-certificates wget gnupg procps-ng iproute2 \
+        ffmpeg cifs-utils sg3_utils mt-st lsscsi util-linux \
         base-devel autoconf automake libtool pkgconf fuse libxml2 openssl net-snmp icu
       ;;
     zypper)
       zypper --non-interactive refresh || true
       zypper --non-interactive install -y \
-        python3 python3-pip python3-devel git curl ca-certificates ffmpeg cifs-utils sg3_utils mt-st lsscsi util-linux \
+        python3 python3-pip python3-devel git curl ca-certificates wget gnupg \
+        procps iproute2 hostname \
+        ffmpeg cifs-utils sg3_utils mt-st lsscsi util-linux \
         gcc gcc-c++ make autoconf automake libtool pkg-config fuse-devel libxml2-devel libopenssl-devel net-snmp-devel libicu-devel uuid-devel openssl
       ;;
   esac
@@ -153,10 +168,103 @@ install_macos_packages() {
     brew_cmd=(sudo -u "$SUDO_USER" -H brew)
   fi
   say "使用 Homebrew 安装依赖"
-  "${brew_cmd[@]}" install python@3.12 git curl ffmpeg || true
+  local brew_args=("${brew_cmd[@]}")
+  if [[ "$PROXY_ENABLED" -eq 1 ]]; then
+    if [[ "${EUID:-$(id -u)}" -eq 0 && -n "${SUDO_USER:-}" ]]; then
+      brew_args=(sudo -u "$SUDO_USER" -H env "HTTP_PROXY=$PROXY_URL" "HTTPS_PROXY=$PROXY_URL" "ALL_PROXY=$PROXY_URL" "NO_PROXY=localhost,127.0.0.1,::1" brew)
+    else
+      brew_args=(env "HTTP_PROXY=$PROXY_URL" "HTTPS_PROXY=$PROXY_URL" "ALL_PROXY=$PROXY_URL" "NO_PROXY=localhost,127.0.0.1,::1" brew)
+    fi
+  fi
+  "${brew_args[@]}" install python@3.12 git curl ffmpeg || true
   # Homebrew Python 可能不在 root PATH 中；记录一个可用 python
   if have python3; then :; elif [[ -x /opt/homebrew/bin/python3 ]]; then
     export PATH="/opt/homebrew/bin:$PATH"
+  fi
+}
+
+urlencode() {
+  local LC_ALL=C s="$1" out="" c hex i
+  for ((i=0; i<${#s}; i++)); do
+    c="${s:i:1}"
+    case "$c" in
+      [a-zA-Z0-9.~_-]) out+="$c" ;;
+      *) printf -v hex '%%%02X' "'$c"; out+="$hex" ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+
+apply_proxy_env() {
+  export HTTP_PROXY="$PROXY_URL" HTTPS_PROXY="$PROXY_URL" ALL_PROXY="$PROXY_URL"
+  export http_proxy="$PROXY_URL" https_proxy="$PROXY_URL" all_proxy="$PROXY_URL"
+  export NO_PROXY="localhost,127.0.0.1,::1"
+}
+
+configure_proxy() {
+  if [[ "$PROXY_DISABLED" -eq 1 ]]; then
+    say "按要求跳过代理配置"
+    return 0
+  fi
+  if [[ -n "$PROXY_CLI" ]]; then
+    PROXY_URL="$PROXY_CLI"
+    [[ "$PROXY_URL" == *://* ]] || PROXY_URL="http://$PROXY_URL"
+    PROXY_ENABLED=1
+    apply_proxy_env
+    say "使用命令行代理（凭据已隐藏）"
+    return 0
+  fi
+  # 交互输入从 /dev/tty 读取，curl | bash 时 stdin 已被脚本占用。
+  if [[ ! -t 0 && ! -r /dev/tty ]]; then
+    warn "当前非交互环境，未配置代理；可用 --proxy URL 或 --no-proxy"
+    return 0
+  fi
+  exec 3</dev/tty 2>/dev/null || { warn "无法读取终端，跳过代理配置"; return 0; }
+  local ans addr port user pass
+  printf '是否配置代理？[y/N]: ' >&2
+  read -r ans <&3 || ans=""
+  case "$ans" in
+    y|Y|yes|YES) ;;
+    *) say "不配置代理"; exec 3<&-; return 0 ;;
+  esac
+  read -r -p "代理地址（IP/域名，可带 http://）: " addr <&3 || addr=""
+  while [[ -z "$addr" ]]; do
+    read -r -p "代理地址不能为空，请重新输入: " addr <&3 || true
+  done
+  read -r -p "代理端口: " port <&3 || port=""
+  while ! [[ "$port" =~ ^[0-9]+$ ]] || (( port < 1 || port > 65535 )); do
+    read -r -p "端口无效，请输入 1-65535: " port <&3 || true
+  done
+  read -r -p "代理用户名（可留空）: " user <&3 || user=""
+  if [[ -n "$user" ]]; then
+    read -r -s -p "代理密码（可留空）: " pass <&3 || pass=""
+    printf '\n' >&2
+  else
+    pass=""
+  fi
+  exec 3<&-
+  addr="${addr#http://}"; addr="${addr#https://}"; addr="${addr%/}"
+  if [[ -n "$user" ]]; then
+    PROXY_URL="http://$(urlencode "$user"):$(urlencode "$pass")@$addr:$port"
+  else
+    PROXY_URL="http://$addr:$port"
+  fi
+  PROXY_ENABLED=1
+  apply_proxy_env
+  say "已启用代理（密码不回显）"
+}
+
+ensure_systemd() {
+  if [[ "$OS" == "Darwin" ]]; then return 0; fi
+  if ! have systemctl; then
+    say "未检测到 systemctl，尝试安装 systemd"
+    install_linux_packages
+  fi
+  have systemctl || die "systemctl 仍不可用，无法注册开机自启"
+  local pid1
+  pid1="$(cat /proc/1/comm 2>/dev/null || true)"
+  if [[ "$pid1" != "systemd" ]]; then
+    die "当前 PID1 是 ${pid1:-未知}，不是 systemd；无法注册开机自启。请在 systemd 主机上运行，或改用 docker-compose.yml"
   fi
 }
 
@@ -305,6 +413,12 @@ write_env() {
     echo "AVLIB_BROWSE_ROOTS=/mnt,$LAMS_DATA"
     echo "AVLIB_SECRET_KEY=$secret"
     echo "TZ=Asia/Shanghai"
+    if [[ "$PROXY_ENABLED" -eq 1 ]]; then
+      echo "HTTP_PROXY=$PROXY_URL"
+      echo "HTTPS_PROXY=$PROXY_URL"
+      echo "ALL_PROXY=$PROXY_URL"
+      echo "NO_PROXY=localhost,127.0.0.1,::1"
+    fi
   } > /etc/lams/lams.env
   chmod 600 /etc/lams/lams.env
 }
@@ -332,7 +446,7 @@ open_firewall() {
 }
 
 install_service_linux() {
-  have systemctl || die "未检测到 systemd，无法注册开机自启服务；可手动运行 gunicorn"
+  ensure_systemd
   say "写入 systemd 服务"
   cat > /etc/systemd/system/lams.service <<EOF
 [Unit]
@@ -362,8 +476,11 @@ EOF
 
 install_service_macos() {
   say "写入 launchd 服务"
-  local secret
+  local secret proxy_xml=""
   secret="$(sed -n 's/^AVLIB_SECRET_KEY=//p' /etc/lams/lams.env | head -1)"
+  if [[ "$PROXY_ENABLED" -eq 1 ]]; then
+    proxy_xml="<key>HTTP_PROXY</key><string>$PROXY_URL</string><key>HTTPS_PROXY</key><string>$PROXY_URL</string><key>ALL_PROXY</key><string>$PROXY_URL</string><key>NO_PROXY</key><string>localhost,127.0.0.1,::1</string>"
+  fi
   cat > /Library/LaunchDaemons/com.lams.archive.plist <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -394,6 +511,7 @@ install_service_macos() {
     <key>AVLIB_BROWSE_ROOTS</key><string>/mnt,$LAMS_DATA</string>
     <key>AVLIB_SECRET_KEY</key><string>$secret</string>
     <key>TZ</key><string>Asia/Shanghai</string>
+    ${proxy_xml}
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
@@ -402,6 +520,7 @@ install_service_macos() {
 </dict>
 </plist>
 EOF
+  chmod 600 /Library/LaunchDaemons/com.lams.archive.plist
   launchctl bootout system/com.lams.archive 2>/dev/null || true
   launchctl bootstrap system /Library/LaunchDaemons/com.lams.archive.plist
   launchctl enable system/com.lams.archive
@@ -459,6 +578,7 @@ EOF
 
 say "LAMS installer 开始"
 say "系统: $OS ${DISTRO_ID:+($DISTRO_ID)}"
+configure_proxy
 install_packages
 install_project
 install_python_deps
