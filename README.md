@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Flask](https://img.shields.io/badge/Flask-3.x-000000?logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
 [![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
-[![Version](https://img.shields.io/badge/version-1.1.8-blue)]()
+[![Version](https://img.shields.io/badge/version-1.1.9-blue)]()
 [![Tests](https://img.shields.io/badge/tests-873%20passed-brightgreen)](#测试)
 
 **LAMS** 是一个自托管的个人 AV 归档管理系统，用来把 **NAS 热数据** 与 **LTO 磁带冷数据** 统一编目、检索、播放和备份。
@@ -596,6 +596,7 @@ data/
 
 | 版本 | 日期 | 主要更新 |
 |---|---|---|
+| v1.1.9 | 2026-11-18 | MP4/HEVC 播放改为原生解码优先，WASM 回退 |
 | v1.1.8 | 2026-10-29 | 所有弹窗打开时冻结背景滚动，关闭最后一个弹窗后恢复 |
 | v1.1.7 | 2026-10-29 | 无条码磁带支持手动输入物理条码登记并挂载 |
 | v1.1.6 | 2026-10-29 | 挂载失败只卸载不再自动弹出；合并弹出交互、文件传输进度/ETA、待确认筛选、备份 sha256 保留 |

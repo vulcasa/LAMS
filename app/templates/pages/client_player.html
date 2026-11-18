@@ -10,6 +10,7 @@
     <div class="client-stage" id="clientStage" data-file-id="{{ selected.file_id }}"
          data-title-id="{{ selected.title_id }}" data-src="{{ selected.src }}">
       <movi-player id="clientPlayer" src="{{ selected.src }}" controls playsinline
+          engine="native wasm"
           wasmurl="{{ url_for('static', filename='vendor/movi/movi.wasm') }}"></movi-player>
       <button type="button" class="client-playlist-toggle" id="clientPlaylistToggle" title="播放列表">☰</button>
     </div>
