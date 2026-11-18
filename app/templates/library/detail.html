@@ -232,7 +232,7 @@
     <h3>文件位置（{{ files|length }}）</h3>
     {% if files %}
     <table class="files">
-      <tr><th>介质</th><th>路径</th><th>大小</th><th>置信度</th><th>修改时间</th></tr>
+      <tr><th>介质</th><th>路径</th><th>大小</th><th>置信度</th><th>修改时间</th><th style="width:64px">操作</th></tr>
       {% for f in files %}
       <tr>
         <td>{% if f.volume.kind == 'tape' %}<span class="badge tape">{{ f.volume.ref }}</span>{% else %}<span class="badge nas">NAS</span>{% endif %}</td>
@@ -240,6 +240,16 @@
         <td class="nowrap">{{ f.size|filesizeformat if f.size }}</td>
         <td class="nowrap">{% if f.confidence is not none %}{{ f.confidence }}{% if f.confidence < 90 %}<span class="badge review" style="margin-left:6px">待抽检</span>{% endif %}{% else %}—{% endif %}</td>
         <td class="nowrap">{{ f.mtime|bjtime if f.mtime else '—' }}</td>
+        <td class="nowrap">
+          <a class="btn tiny file-download" href="{{ url_for('pages.download_file', file_id=f.id) }}"
+             title="下载该文件" aria-label="下载 {{ f.name }}" download>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path>
+              <path d="M4 17v3h16v-3"></path>
+            </svg>
+          </a>
+        </td>
       </tr>
       {% endfor %}
     </table>

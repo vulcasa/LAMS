@@ -649,3 +649,12 @@ body.modal-frozen { overflow: hidden; }
 /* 待确认筛选 */
 .review-filter-row { margin: 0 0 12px; }
 .review-filter-row select { min-width: 150px; }
+
+
+/* 影片详情：文件位置下载图标 */
+.file-download {
+  width: 36px; min-width: 36px; height: 36px; padding: 0 !important;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--muted);
+}
+.file-download:hover { color: var(--fg); border-color: var(--accent2); }

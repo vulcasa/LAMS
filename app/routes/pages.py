@@ -446,13 +446,8 @@ def client_player():
     )
 
 
-@bp.route("/source/<int:file_id>")
-def player_source(file_id):
-    item = db.session.get(LibraryFile, file_id)
-    if item is None or item.deleted_at is not None:
-        abort(404)
-    if Path(item.name).suffix.lower() not in VIDEO_SUFFIXES:
-        abort(404)
+def _library_file_target(item: LibraryFile) -> Path:
+    """解析 LibraryFile 对应的真实路径；卷/路径越界统一 404/403。"""
     volume = item.volume
     if volume is None:
         abort(404)
@@ -473,10 +468,35 @@ def player_source(file_id):
         abort(404)
     if not target.is_file():
         abort(404)
+    return target
+
+
+@bp.route("/source/<int:file_id>")
+def player_source(file_id):
+    item = db.session.get(LibraryFile, file_id)
+    if item is None or item.deleted_at is not None:
+        abort(404)
+    if Path(item.name).suffix.lower() not in VIDEO_SUFFIXES:
+        abort(404)
+    target = _library_file_target(item)
     mimetype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
     response = send_file(target, conditional=True, mimetype=mimetype)
     response.headers["Accept-Ranges"] = "bytes"
     return response
+
+
+@bp.route("/download/<int:file_id>")
+def download_file(file_id):
+    """下载影片/字幕等文件；与播放共用卷路径和越界校验。"""
+    item = db.session.get(LibraryFile, file_id)
+    if item is None or item.deleted_at is not None:
+        abort(404)
+    target = _library_file_target(item)
+    mimetype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+    return send_file(
+        target, as_attachment=True, download_name=item.name,
+        conditional=True, mimetype=mimetype,
+    )
 
 
 @bp.route("/activity")

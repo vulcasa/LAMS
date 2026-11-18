@@ -225,3 +225,26 @@ def test_files_transfer_progress_percent_and_eta(app, client):
     assert row["percent"] == 25.0
     assert row["eta_s"] is not None and row["eta_s"] > 0
     assert row["elapsed_s"] >= 19
+
+
+def test_file_location_download_endpoint(app, client):
+    from app.db import db
+    from app.models import LibraryFile, LibraryVolume
+
+    browse = str(app.config["BROWSE_ROOTS"][0])
+    with app.app_context():
+        volume = LibraryVolume(kind="nas", ref=browse, name="test")
+        db.session.add(volume)
+        db.session.flush()
+        row = LibraryFile(
+            volume_id=volume.id, rel_path="a.txt", name="a.txt", size=5,
+        )
+        db.session.add(row)
+        db.session.commit()
+        file_id = row.id
+
+    r = client.get(f"/download/{file_id}")
+    assert r.status_code == 200
+    assert r.data == b"hello"
+    assert "attachment" in r.headers.get("Content-Disposition", "")
+    assert client.get("/download/999999").status_code == 404
