@@ -228,6 +228,9 @@ def test_frames_keep_original_resolution_by_default(tmp_path, monkeypatch):
         assert video_frames.frame_width_setting(app) == 0
 
         commands.clear()
+        from app.models import Asset
+        Asset.query.filter_by(title_id=title.id, kind="screenshot").delete()
+        db.session.commit()
         video_frames.extract_frames(app, title.id, count=1, width=1920)
         assert "scale=1920:-2" in commands[0]
 
@@ -269,6 +272,8 @@ def test_titles_missing_screenshots_excludes_tape_and_existing(tmp_path):
     (nas / "A-001.mp4").write_bytes(b"x")
     (tape / "B-001.mp4").write_bytes(b"x")
     with app.app_context():
+        from app.services.settings import KEY_VIDEO_FRAME_COUNT, set_value
+        set_value(KEY_VIDEO_FRAME_COUNT, "1")
         nas_volume = LibraryVolume(kind="nas", ref=str(nas))
         tape_volume = LibraryVolume(kind="tape", ref=str(tape))
         db.session.add_all([nas_volume, tape_volume]); db.session.flush()
@@ -301,6 +306,58 @@ def test_detail_has_top_right_back_button():
     assert "detail-toolbar" in html
 
 
+def test_extract_frames_replaces_partial_assets_with_exact_count(tmp_path, monkeypatch):
+    from pathlib import Path
+    from app.models import Asset
+
+    app = create_app({
+        "TESTING": True, "WORKER_ENABLED": False,
+        "DATA_DIR": tmp_path / "data", "DB_PATH": tmp_path / "data" / "test.db",
+        "MEDIA_DIR": tmp_path / "data" / "media",
+    })
+    nas = tmp_path / "nas"; nas.mkdir(); (nas / "PART-001.mp4").write_bytes(b"video")
+    with app.app_context():
+        from app.services.settings import KEY_VIDEO_FRAME_COUNT, set_value
+        set_value(KEY_VIDEO_FRAME_COUNT, "4")
+        volume = LibraryVolume(kind="nas", ref=str(nas))
+        db.session.add(volume); db.session.flush()
+        title = Title(dvd_id="PART-001")
+        db.session.add(title); db.session.flush()
+        db.session.add(LibraryFile(volume_id=volume.id, rel_path="PART-001.mp4",
+                                   name="PART-001.mp4", size=5, title_id=title.id))
+        db.session.add_all([
+            Asset(title_id=title.id, kind="screenshot", idx=i,
+                  local_path=f"screenshots/PART-001/0{i}.jpg")
+            for i in range(1, 4)
+        ])
+        db.session.commit()
+
+        class Result:
+            returncode = 0
+            stderr = ""
+            stdout = ""
+
+        def fake_run(command, **kwargs):
+            Path(command[-1]).write_bytes(b"jpg")
+            return Result()
+
+        monkeypatch.setattr(video_frames, "ffmpeg_available", lambda: True)
+        monkeypatch.setattr(video_frames.subprocess, "run", fake_run)
+        monkeypatch.setattr(video_frames, "_duration", lambda path: 600.0)
+
+        result = video_frames.extract_frames(app, title.id)
+        assert result["frames"] == 4
+        rows = Asset.query.filter_by(title_id=title.id, kind="screenshot").order_by(Asset.idx).all()
+        assert len(rows) == 4
+        assert [row.idx for row in rows] == [1, 2, 3, 4]
+        assert video_frames.titles_missing_screenshots(app, limit=10) == []
+
+        again = video_frames.extract_frames(app, title.id)
+        assert again["skipped"] is True
+        assert again["frames"] == 0
+        assert Asset.query.filter_by(title_id=title.id, kind="screenshot").count() == 4
+
+
 def test_batch_frames_skips_titles_with_existing_shots(tmp_path, monkeypatch):
     from app.models import Asset
     from app.services import jobs
@@ -310,6 +367,8 @@ def test_batch_frames_skips_titles_with_existing_shots(tmp_path, monkeypatch):
                       "DATA_DIR": tmp_path / "data", "DB_PATH": tmp_path / "data" / "test.db"})
     nas = tmp_path / "nas"; nas.mkdir(); (nas / "BATCH-001.mp4").write_bytes(b"x")
     with app.app_context():
+        from app.services.settings import KEY_VIDEO_FRAME_COUNT, set_value
+        set_value(KEY_VIDEO_FRAME_COUNT, "1")
         volume = LibraryVolume(kind="nas", ref=str(nas))
         db.session.add(volume); db.session.flush()
         title = Title(dvd_id="BATCH-001")

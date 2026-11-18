@@ -139,30 +139,53 @@ def find_video_file(app, title: Title) -> Path | None:
 
 
 def titles_missing_screenshots(app, limit: int = 50) -> list[Title]:
-    """需要生成视频截图的标题：有非磁带视频文件，且还没有 screenshot。"""
-    from sqlalchemy import exists, or_
+    """需要生成/补齐视频截图的标题。
+
+    不是只看“有没有截图”，而是比较：
+    ``截图数 < 可访问视频文件数 × 当前设置帧数``。
+    这样意外中断留下 3、4 张的影片会被重新纳入；已完整的不重复生成。
+    """
+    from sqlalchemy import exists, func, or_
 
     from app.models import FrameFailure, LibraryVolume
 
     video_filter = or_(
         *[LibraryFile.name.ilike(f"%{ext}") for ext in sorted(_VIDEO_EXTS)]
     )
-    screenshot_exists = exists().where(
-        Asset.title_id == Title.id, Asset.kind == "screenshot"
-    )
-    query = (
-        db.session.query(Title)
-        .join(LibraryFile, LibraryFile.title_id == Title.id)
+    wanted_per_file = frame_count_setting(app)
+    video_counts = (
+        db.session.query(
+            LibraryFile.title_id.label("title_id"),
+            func.count(LibraryFile.id).label("video_count"),
+        )
         .join(LibraryVolume, LibraryVolume.id == LibraryFile.volume_id)
         .filter(
             LibraryVolume.kind != "tape",
             LibraryFile.deleted_at.is_(None),
             LibraryFile.is_sidecar.is_(False),
             video_filter,
-            ~screenshot_exists,
             ~exists().where(FrameFailure.file_id == LibraryFile.id),
         )
-        .distinct()
+        .group_by(LibraryFile.title_id)
+        .subquery()
+    )
+    shot_counts = (
+        db.session.query(
+            Asset.title_id.label("title_id"),
+            func.count(Asset.id).label("shot_count"),
+        )
+        .filter(Asset.kind == "screenshot")
+        .group_by(Asset.title_id)
+        .subquery()
+    )
+    query = (
+        db.session.query(Title)
+        .join(video_counts, video_counts.c.title_id == Title.id)
+        .outerjoin(shot_counts, shot_counts.c.title_id == Title.id)
+        .filter(
+            func.coalesce(shot_counts.c.shot_count, 0)
+            < video_counts.c.video_count * wanted_per_file
+        )
         .order_by(Title.id)
     )
     return query.limit(max(1, min(int(limit), 500))).all()
@@ -272,15 +295,42 @@ def extract_frames(
             pass
 
     out_dir = Path(app.config["MEDIA_DIR"]) / "screenshots" / _safe_stem(title.dvd_id)
+    existing_assets = (
+        Asset.query.filter_by(title_id=title.id, kind="screenshot")
+        .order_by(Asset.id)
+        .all()
+    )
+    expected = count * len(entries)
+    # 已完整：不再追加，避免帧数超过设置值
+    if len(existing_assets) == expected:
+        stats.update(ok=True, frames=0, skipped=True, count=count,
+                     files=len(entries), existing=len(existing_assets),
+                     total_planned=expected)
+        return stats
+
+    # 不完整（中断/旧版本留下的 3、4 张）：清掉旧 rows 和旧截图，重新生成精确数量。
+    if existing_assets:
+        media_root = Path(app.config["MEDIA_DIR"]).resolve()
+        for asset in existing_assets:
+            if asset.local_path:
+                try:
+                    path = (media_root / asset.local_path).resolve()
+                    if path == media_root or media_root in path.parents:
+                        path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            db.session.delete(asset)
+        db.session.commit()
+    try:
+        if out_dir.exists():
+            shutil.rmtree(out_dir)
+    except OSError:
+        pass
     out_dir.mkdir(parents=True, exist_ok=True)
 
     failed_files: dict[int, str] = {}
-    existing = {
-        int(asset.idx)
-        for asset in Asset.query.filter_by(title_id=title.id, kind="screenshot").all()
-        if asset.idx is not None
-    }
-    idx = max(existing, default=0)
+    existing: set[int] = set()
+    idx = 0
     processed = 0
     fallback = float(app.config.get("VIDEO_FALLBACK_DURATION", 7200) or 7200)
     for file_no, (video_row, video) in enumerate(entries, start=1):

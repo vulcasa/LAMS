@@ -549,11 +549,7 @@ def _video_frames_batch(app, job_id, payload, progress):
     failed_titles = 0
     done = 0
     for title in titles:
-        # 任务开始后可能已被其它任务生成截图；逐部再确认，绝不重复生成
-        if Asset.query.filter_by(title_id=title.id, kind="screenshot").count() > 0:
-            done += 1
-            progress(done, f"跳过已有截图 {done}/{len(titles)} · {title.dvd_id}")
-            continue
+        # 完整/不完整判断统一交给 extract_frames：完整跳过，不完整重建精确数量。
         done += 1
         result = extract_frames(app, title.id, count=count, allow_tape=False)
         frames += int(result.get("frames") or 0)
