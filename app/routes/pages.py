@@ -440,9 +440,18 @@ def client_player():
     selected = next((item for item in entries if item["file_id"] == selected_id), None)
     if selected is None and entries:
         selected = entries[0]
+    from app.services.mobile import is_mobile_request
+
+    suffix = Path(selected["name"]).suffix.lower() if selected and selected.get("name") else ""
+    # iOS/移动端 Safari 对 MP4/HEVC 的原生 <video> 支持最好；Movi 的
+    # WebCodecs/WASM 路径在 iPhone 上容易软件解码卡顿。
+    native_video = bool(
+        selected and is_mobile_request() and suffix in {".mp4", ".m4v", ".mov"}
+    )
     return render_template(
         "pages/client_player.html",
         entries=entries, selected=selected, total=len(entries), title_id=title_id,
+        native_video=native_video,
     )
 
 

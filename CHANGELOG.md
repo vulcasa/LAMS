@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.1.12 — 2026-11-19
+
+### 移动端修复
+
+- 移动端白名单加入 `pages.download_file`，下载不再返回“移动端功能受限”HTML；
+- iPhone/iPad 等移动端播放 MP4/M4V/MOV 时使用原生 `<video>`，直接走系统硬件解码；
+- Movi/WebCodecs/WASM 路径保留给 MKV 等原生不支持的格式；
+- 解决 iPhone Safari 上视频硬解、音频软解、A/V wall clock 不同步导致的持续 buffering。
+
+
 ## v1.1.11 — 2026-11-18
 
 ### 抽帧中断恢复

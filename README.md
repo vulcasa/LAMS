@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Flask](https://img.shields.io/badge/Flask-3.x-000000?logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
 [![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
-[![Version](https://img.shields.io/badge/version-1.1.11-blue)]()
+[![Version](https://img.shields.io/badge/version-1.1.12-blue)]()
 [![Tests](https://img.shields.io/badge/tests-868%20passed-brightgreen)](#测试)
 
 **LAMS** 是一个自托管的个人 AV 归档管理系统，用来把 **NAS 热数据** 与 **LTO 磁带冷数据** 统一编目、检索、播放和备份。
@@ -596,6 +596,7 @@ data/
 
 | 版本 | 日期 | 主要更新 |
 |---|---|---|
+| v1.1.12 | 2026-11-19 | 修复移动端下载拦截；iPhone MP4/MOV 改用原生视频硬解 |
 | v1.1.11 | 2026-11-18 | 抽帧中断恢复按目标帧数重建，避免跳过或超出数量 |
 | v1.1.10 | 2026-11-18 | 影片详情页文件位置增加下载图标 |
 | v1.1.9 | 2026-11-18 | MP4/HEVC 播放改为原生解码优先，WASM 回退 |

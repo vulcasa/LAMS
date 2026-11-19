@@ -97,3 +97,10 @@
 @media (max-width:520px) {
   .client-playlist-toggle { width:32px; height:32px; }
 }
+
+
+/* 移动端/Safari 原生 MP4/HEVC 播放 */
+.client-stage video.native-player {
+  width: 100%; height: 100%; display: block; background: #000;
+  object-fit: contain; border-radius: 10px;
+}

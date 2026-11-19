@@ -9,9 +9,14 @@
     {% if selected %}
     <div class="client-stage" id="clientStage" data-file-id="{{ selected.file_id }}"
          data-title-id="{{ selected.title_id }}" data-src="{{ selected.src }}">
+      {% if native_video %}
+      <video id="clientPlayer" class="native-player" src="{{ selected.src }}"
+             controls playsinline preload="metadata"></video>
+      {% else %}
       <movi-player id="clientPlayer" src="{{ selected.src }}" controls playsinline
           engine="native wasm"
           wasmurl="{{ url_for('static', filename='vendor/movi/movi.wasm') }}"></movi-player>
+      {% endif %}
       <button type="button" class="client-playlist-toggle" id="clientPlaylistToggle" title="播放列表">☰</button>
     </div>
     <div class="player-meta">
@@ -58,6 +63,6 @@
 
 {% endblock %}
 {% block scripts %}
-{% if selected %}<script src="{{ url_for('static', filename='vendor/movi/element.slim.global.js') }}"></script>{% endif %}
+{% if selected and not native_video %}<script src="{{ url_for('static', filename='vendor/movi/element.slim.global.js') }}"></script>{% endif %}
 <script src="{{ url_for('static', filename='js/client_player.js') }}"></script>
 {% endblock %}

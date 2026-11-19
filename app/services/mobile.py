@@ -24,6 +24,7 @@ _MOBILE_ENDPOINTS = {
     "pages.player",
     "pages.client_player",
     "pages.player_source",
+    "pages.download_file",
     "pages.media",
     "pages.api_recent_plays",
     "pages.api_record_play",
